@@ -1,0 +1,8 @@
+Package: com.8bp.extendedguidelines
+Name: Extended Guidelines
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Extended guideline prediction with multi-bounce trajectory for 8 Ball Pool
+Maintainer: Custom
+Author: Custom
+Section: Tweaks

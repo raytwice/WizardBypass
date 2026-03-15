@@ -1,0 +1,47 @@
+name: Build Extended Guidelines Tweak
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install Theos
+      run: |
+        git clone --recursive https://github.com/theos/theos.git $HOME/theos
+        echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+    - name: Install iOS SDK
+      run: |
+        cd $HOME/theos
+        curl -LO https://github.com/theos/sdks/archive/master.zip
+        unzip master.zip
+        mv sdks-master/iPhoneOS*.sdk sdks/
+
+    - name: Build tweak
+      run: |
+        export THEOS=$HOME/theos
+        cd ${{ github.workspace }}
+        make clean
+        make package
+
+    - name: Upload dylib artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ExtendedGuidelines-dylib
+        path: .theos/obj/debug/ExtendedGuidelines.dylib
+
+    - name: Upload deb package
+      uses: actions/upload-artifact@v3
+      with:
+        name: ExtendedGuidelines-deb
+        path: packages/*.deb

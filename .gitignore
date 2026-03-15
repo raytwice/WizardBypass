@@ -1,0 +1,21 @@
+# Build artifacts
+.theos/
+packages/
+*.deb
+*.dylib
+*.o
+
+# Temp files
+temp_ipa_inject/
+*.ipa
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
