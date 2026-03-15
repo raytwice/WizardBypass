@@ -133,6 +133,7 @@ def sign_ipa(ipa_path, cert_path, mobileprovision_path, password):
         "-k", cert_path,
         "-m", mobileprovision_path,
         "-p", password,
+        "-z", "9",
         "-o", signed_ipa,
         ipa_path
     ]

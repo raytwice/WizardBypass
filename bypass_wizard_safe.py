@@ -85,7 +85,7 @@ def sign_ipa(ipa_path):
         return None
 
     signed_ipa = ipa_path.replace(".ipa", "_signed.ipa")
-    cmd = [zsign_path, "-k", cert_path, "-m", provision_path, "-p", password, "-o", signed_ipa, ipa_path]
+    cmd = [zsign_path, "-k", cert_path, "-m", provision_path, "-p", password, "-z", "9", "-o", signed_ipa, ipa_path]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
