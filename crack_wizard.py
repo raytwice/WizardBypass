@@ -112,6 +112,46 @@ def process_wizard_ipa(ipa_path, bypass_dylib, output_ipa):
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
 
+def sign_ipa(ipa_path, cert_path, mobileprovision_path, password):
+    """Sign IPA using zsign"""
+
+    print(f"\n[*] Signing IPA with zsign...")
+
+    # Check if zsign is available
+    zsign_path = r"C:\Project\zsign.exe"
+    if not os.path.exists(zsign_path):
+        zsign_path = shutil.which("zsign")
+        if not zsign_path:
+            print("[!] Warning: zsign not found")
+            print("[!] Expected at: C:\\Project\\zsign.exe")
+            return None
+
+    # Build zsign command
+    signed_ipa = ipa_path.replace(".ipa", "_signed.ipa")
+    cmd = [
+        zsign_path,
+        "-k", cert_path,
+        "-m", mobileprovision_path,
+        "-p", password,
+        "-o", signed_ipa,
+        ipa_path
+    ]
+
+    print(f"[*] Running zsign...")
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode == 0:
+            print(f"[+] Successfully signed: {signed_ipa}")
+            return signed_ipa
+        else:
+            print(f"[!] Signing failed: {result.stderr}")
+            return None
+    except Exception as e:
+        print(f"[!] Error running zsign: {e}")
+        return None
+
 def main():
     print("=" * 60)
     print("Wizard Authentication Bypass - Complete Solution")
@@ -147,14 +187,34 @@ def main():
         print("    1. Patched Wizard binary (validation functions -> always true)")
         print("    2. Injected bypass dylib (hooks SCLAlertView + validation)")
         print("    3. Backed up original Wizard binary")
-        print("\n[*] Next steps:")
-        print("    1. Sign with Sideloadly/AltStore")
-        print("    2. Install on device")
-        print("    3. Check logs: idevicesyslog | grep WizardBypass")
-        print("\n[*] Expected behavior:")
-        print("    - No authentication popup")
-        print("    - All Wizard features unlocked")
-        print("    - Logs show '[WizardBypass]' messages")
+
+        # Auto-sign with zsign
+        cert_path = r"C:\Users\ray\Downloads\Telegram Desktop\[ ELI GAMING ] - 00008020-00124DEC2663002E.p12"
+        provision_path = r"C:\Users\ray\Downloads\Telegram Desktop\1 - [ ELI GAMING ] - 00008020-00124DEC2663002E.mobileprovision"
+        password = "1"
+
+        if os.path.exists(cert_path) and os.path.exists(provision_path):
+            signed_ipa = sign_ipa(output_ipa, cert_path, provision_path, password)
+
+            if signed_ipa:
+                print("\n" + "=" * 60)
+                print("[+] SIGNING COMPLETE!")
+                print("=" * 60)
+                print(f"\n[*] Signed IPA: {signed_ipa}")
+                print("\n[*] Next steps:")
+                print("    1. Install with Sideloadly/AltStore")
+                print("    2. Check logs: idevicesyslog | grep WizardBypass")
+                print("\n[*] Expected behavior:")
+                print("    - No authentication popup")
+                print("    - All Wizard features unlocked")
+                print("    - Logs show '[WizardBypass]' messages")
+            else:
+                print("\n[!] Signing failed. You'll need to sign manually.")
+                print(f"[*] Unsigned IPA: {output_ipa}")
+        else:
+            print("\n[!] Certificate or provisioning profile not found")
+            print("[*] Sign manually with Sideloadly/AltStore")
+            print(f"[*] Unsigned IPA: {output_ipa}")
     else:
         print("\n[!] Cracking failed!")
         sys.exit(1)
