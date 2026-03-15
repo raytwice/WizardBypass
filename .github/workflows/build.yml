@@ -13,7 +13,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Install Theos
       run: |
@@ -35,13 +35,13 @@ jobs:
         make package
 
     - name: Upload dylib artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ExtendedGuidelines-dylib
         path: .theos/obj/debug/ExtendedGuidelines.dylib
 
     - name: Upload deb package
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ExtendedGuidelines-deb
         path: packages/*.deb
