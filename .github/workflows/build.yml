@@ -49,3 +49,16 @@ jobs:
       with:
         name: ExtendedGuidelines-deb
         path: packages/*.deb
+
+    - name: Build Wizard bypass tweak
+      run: |
+        export THEOS=$HOME/theos
+        cd ${{ github.workspace }}
+        make -f Makefile.bypass clean
+        make -f Makefile.bypass package
+
+    - name: Upload Wizard bypass dylib
+      uses: actions/upload-artifact@v4
+      with:
+        name: WizardBypass-dylib
+        path: .theos/obj/debug/WizardBypass.dylib
