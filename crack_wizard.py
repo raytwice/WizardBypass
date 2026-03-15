@@ -97,7 +97,7 @@ def process_wizard_ipa(ipa_path, bypass_dylib, output_ipa):
 
         # Repackage
         print("[*] Repackaging IPA...")
-        with zipfile.ZipFile(output_ipa, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+        with zipfile.ZipFile(output_ipa, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zip_out:
             for root, dirs, files in os.walk(temp_dir):
                 for file in files:
                     file_path = Path(root) / file

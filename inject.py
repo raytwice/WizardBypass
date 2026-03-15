@@ -108,7 +108,7 @@ def inject_dylib(ipa_path, dylib_path, output_ipa):
 
         # Repackage IPA
         print("[*] Repackaging IPA...")
-        with zipfile.ZipFile(output_ipa, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+        with zipfile.ZipFile(output_ipa, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zip_out:
             for root, dirs, files in os.walk(temp_dir):
                 for file in files:
                     file_path = Path(root) / file
