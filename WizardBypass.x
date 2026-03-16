@@ -642,6 +642,78 @@ static void delayed_hook(void) {
     if (pajdsakdfj_class) {
         NSLog(@"[WizardBypass] Found Pajdsakdfj class, creating instance...");
 
+        // HOOK didTapIconView to force menu display
+        SEL tapSelector = NSSelectorFromString(@"didTapIconView");
+        Method tapMethod = class_getInstanceMethod(pajdsakdfj_class, tapSelector);
+        if (tapMethod) {
+            NSLog(@"[WizardBypass] Hooking didTapIconView to force menu display");
+            IMP originalTap = method_getImplementation(tapMethod);
+            IMP newTap = imp_implementationWithBlock(^(id self) {
+                NSLog(@"[WizardBypass] 🔵 didTapIconView CALLED - forcing menu display");
+
+                // Call original first to see what happens
+                typedef void (*OrigFunc)(id, SEL);
+                ((OrigFunc)originalTap)(self, tapSelector);
+                NSLog(@"[WizardBypass] Original didTapIconView completed");
+
+                // Now try to manually show the menu
+                NSLog(@"[WizardBypass] Attempting to show menu manually...");
+
+                // Look for Wksahfnasj class (likely the menu controller)
+                Class menuClass = objc_getClass("Wksahfnasj");
+                if (menuClass) {
+                    NSLog(@"[WizardBypass] Found Wksahfnasj (menu class)");
+
+                    // Try to create and show menu
+                    id menuInstance = [[menuClass alloc] init];
+                    if (menuInstance) {
+                        NSLog(@"[WizardBypass] Created menu instance: %@", menuInstance);
+
+                        // Try common show methods
+                        SEL showSel = NSSelectorFromString(@"show");
+                        if ([menuInstance respondsToSelector:showSel]) {
+                            NSLog(@"[WizardBypass] Calling show method");
+                            ((void (*)(id, SEL))objc_msgSend)(menuInstance, showSel);
+                        }
+
+                        SEL presentSel = NSSelectorFromString(@"present");
+                        if ([menuInstance respondsToSelector:presentSel]) {
+                            NSLog(@"[WizardBypass] Calling present method");
+                            ((void (*)(id, SEL))objc_msgSend)(menuInstance, presentSel);
+                        }
+                    }
+                } else {
+                    NSLog(@"[WizardBypass] Wksahfnasj class not found, searching for menu classes...");
+
+                    // Search for any class that might be the menu
+                    unsigned int classCount;
+                    Class *allClasses = objc_copyClassList(&classCount);
+                    for (unsigned int i = 0; i < classCount; i++) {
+                        const char* className = class_getName(allClasses[i]);
+                        const char* imageName = class_getImageName(allClasses[i]);
+
+                        if (imageName && strstr(imageName, "Wizard.framework")) {
+                            // Look for classes with "menu", "view", "controller" in methods
+                            unsigned int methodCount;
+                            Method *methods = class_copyMethodList(allClasses[i], &methodCount);
+                            for (unsigned int j = 0; j < methodCount; j++) {
+                                const char* methodName = sel_getName(method_getName(methods[j]));
+                                if (strcasestr(methodName, "menu") || strcasestr(methodName, "show") || strcasestr(methodName, "present")) {
+                                    NSLog(@"[WizardBypass] Found potential menu class: %s with method: %s", className, methodName);
+                                }
+                            }
+                            free(methods);
+                        }
+                    }
+                    free(allClasses);
+                }
+            });
+            method_setImplementation(tapMethod, newTap);
+            NSLog(@"[WizardBypass] ✓ didTapIconView hook installed");
+        } else {
+            NSLog(@"[WizardBypass] WARNING: didTapIconView method not found");
+        }
+
         // Get the main window (iOS 13+ compatible)
         UIWindow* keyWindow = nil;
         NSArray* windows = [[UIApplication sharedApplication] windows];
