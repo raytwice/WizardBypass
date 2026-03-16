@@ -142,25 +142,54 @@ static void hook_scl_alert_view(void) {
 
     Class cls = objc_getClass("SCLAlertView");
     if (!cls) {
-        NSLog(@"[WizardBypass] ERROR: SCLAlertView class not found");
+        NSLog(@"[WizardBypass] WARNING: SCLAlertView class not found (may load later)");
         return;
     }
 
-    // Hook showCustom:color:title:subTitle:closeButtonTitle:duration:
+    NSLog(@"[WizardBypass] Found SCLAlertView class, hooking ALL methods...");
+
+    // Get ALL instance methods
+    unsigned int method_count;
+    Method* methods = class_copyMethodList(cls, &method_count);
+
+    NSLog(@"[WizardBypass] Found %u methods in SCLAlertView", method_count);
+
+    for (unsigned int i = 0; i < method_count; i++) {
+        SEL selector = method_getName(methods[i]);
+        const char* name = sel_getName(selector);
+
+        // Hook ANY method that contains "show" (case insensitive)
+        if (strcasestr(name, "show")) {
+            NSLog(@"[WizardBypass] Hooking method: %s", name);
+
+            // Replace with blocking implementation
+            IMP new_imp = imp_implementationWithBlock(^(id self) {
+                NSLog(@"[WizardBypass] ✓✓✓ BLOCKED SCLAlertView::%s ✓✓✓", name);
+                // Do nothing - popup blocked
+            });
+
+            method_setImplementation(methods[i], new_imp);
+        }
+    }
+
+    free(methods);
+
+    // Also hook the specific methods we know about
     SEL sel1 = NSSelectorFromString(@"showCustom:color:title:subTitle:closeButtonTitle:duration:");
     Method method1 = class_getInstanceMethod(cls, sel1);
     if (method1) {
         original_showCustom = method_setImplementation(method1, (IMP)swizzled_showCustom);
-        NSLog(@"[WizardBypass] ✓ Hooked showCustom");
+        NSLog(@"[WizardBypass] ✓ Hooked showCustom (specific)");
     }
 
-    // Hook showTitle:subTitle:style:closeButtonTitle:duration:
     SEL sel2 = NSSelectorFromString(@"showTitle:subTitle:style:closeButtonTitle:duration:");
     Method method2 = class_getInstanceMethod(cls, sel2);
     if (method2) {
         original_showTitle = method_setImplementation(method2, (IMP)swizzled_showTitle);
-        NSLog(@"[WizardBypass] ✓ Hooked showTitle");
+        NSLog(@"[WizardBypass] ✓ Hooked showTitle (specific)");
     }
+
+    NSLog(@"[WizardBypass] SCLAlertView comprehensive hooking complete");
 }
 
 // ============================================================================
@@ -226,9 +255,12 @@ static void hook_view_controller_presentation(void) {
         IMP new_imp = imp_implementationWithBlock(^(UIViewController* self, UIViewController* vc, BOOL animated, void(^completion)(void)) {
             NSString* className = NSStringFromClass([vc class]);
 
+            // Log ALL presentations to see what's being shown
+            NSLog(@"[WizardBypass] presentViewController called: %@", className);
+
             // Block alert-related view controllers
             if ([className containsString:@"Alert"] || [className containsString:@"SCL"]) {
-                NSLog(@"[WizardBypass] ✓ BLOCKED presentation of: %@", className);
+                NSLog(@"[WizardBypass] ✓✓✓ BLOCKED presentation of: %@ ✓✓✓", className);
                 if (completion) completion();
                 return;
             }
@@ -240,6 +272,74 @@ static void hook_view_controller_presentation(void) {
 
         method_setImplementation(method, new_imp);
         NSLog(@"[WizardBypass] UIViewController presentation hook installed");
+    }
+}
+
+// ============================================================================
+// PHASE 4D: HOOK UIWindow - Nuclear option to catch everything
+// ============================================================================
+
+static void hook_ui_window(void) {
+    NSLog(@"[WizardBypass] Hooking UIWindow methods...");
+
+    Class window_class = objc_getClass("UIWindow");
+    if (!window_class) {
+        NSLog(@"[WizardBypass] WARNING: UIWindow not found");
+        return;
+    }
+
+    // Hook makeKeyAndVisible
+    SEL selector1 = @selector(makeKeyAndVisible);
+    Method method1 = class_getInstanceMethod(window_class, selector1);
+    if (method1) {
+        IMP original_imp = method_getImplementation(method1);
+        IMP new_imp = imp_implementationWithBlock(^(UIWindow* self) {
+            // Check if this window contains an alert
+            NSString* className = NSStringFromClass([self class]);
+            UIViewController* rootVC = self.rootViewController;
+            NSString* vcClassName = rootVC ? NSStringFromClass([rootVC class]) : @"nil";
+
+            NSLog(@"[WizardBypass] UIWindow makeKeyAndVisible: %@, rootVC: %@", className, vcClassName);
+
+            // Block if it's an alert window
+            if ([className containsString:@"Alert"] || [vcClassName containsString:@"Alert"] ||
+                [vcClassName containsString:@"SCL"]) {
+                NSLog(@"[WizardBypass] ✓✓✓ BLOCKED UIWindow makeKeyAndVisible ✓✓✓");
+                return;
+            }
+
+            // Call original
+            typedef void (*OrigFunc)(UIWindow*, SEL);
+            ((OrigFunc)original_imp)(self, selector1);
+        });
+
+        method_setImplementation(method1, new_imp);
+        NSLog(@"[WizardBypass] UIWindow makeKeyAndVisible hook installed");
+    }
+
+    // Hook addSubview to catch alert views being added
+    SEL selector2 = @selector(addSubview:);
+    Method method2 = class_getInstanceMethod(window_class, selector2);
+    if (method2) {
+        IMP original_imp = method_getImplementation(method2);
+        IMP new_imp = imp_implementationWithBlock(^(UIWindow* self, UIView* view) {
+            NSString* viewClassName = NSStringFromClass([view class]);
+
+            NSLog(@"[WizardBypass] UIWindow addSubview: %@", viewClassName);
+
+            // Block if it's an alert view
+            if ([viewClassName containsString:@"Alert"] || [viewClassName containsString:@"SCL"]) {
+                NSLog(@"[WizardBypass] ✓✓✓ BLOCKED UIWindow addSubview: %@ ✓✓✓", viewClassName);
+                return;
+            }
+
+            // Call original
+            typedef void (*OrigFunc)(UIWindow*, SEL, UIView*);
+            ((OrigFunc)original_imp)(self, selector2, view);
+        });
+
+        method_setImplementation(method2, new_imp);
+        NSLog(@"[WizardBypass] UIWindow addSubview hook installed");
     }
 }
 
@@ -261,6 +361,9 @@ static void delayed_hook(void) {
 
     // Hook UIViewController presentation
     hook_view_controller_presentation();
+
+    // Hook UIWindow (nuclear option)
+    hook_ui_window();
 
     // Try to force authentication state
     force_authentication();
@@ -294,8 +397,12 @@ static void wizard_bypass_init(void) {
     NSLog(@"[WizardBypass] Phase 4: Hooking UIViewController presentation...");
     hook_view_controller_presentation();
 
-    // Phase 5: Schedule delayed hook after 2 seconds (when Wizard is fully loaded)
-    NSLog(@"[WizardBypass] Phase 5: Scheduling delayed hook in 2 seconds...");
+    // Phase 5: Hook UIWindow (nuclear option)
+    NSLog(@"[WizardBypass] Phase 5: Hooking UIWindow...");
+    hook_ui_window();
+
+    // Phase 6: Schedule delayed hook after 2 seconds (when Wizard is fully loaded)
+    NSLog(@"[WizardBypass] Phase 6: Scheduling delayed hook in 2 seconds...");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         delayed_hook();
