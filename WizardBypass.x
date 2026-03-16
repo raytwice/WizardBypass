@@ -336,8 +336,9 @@ static void hook_view_controller_presentation(void) {
             // Log ALL presentations to see what's being shown
             NSLog(@"[WizardBypass] presentViewController called: %@", className);
 
-            // Block alert-related view controllers
-            if ([className containsString:@"Alert"] || [className containsString:@"SCL"]) {
+            // ONLY block SCLAlertView itself, not other SCL* view controllers
+            if ([className isEqualToString:@"SCLAlertView"] ||
+                [className containsString:@"UIAlertController"]) {
                 NSLog(@"[WizardBypass] ✓✓✓ BLOCKED presentation of: %@ ✓✓✓", className);
                 if (completion) completion();
                 return;
@@ -379,9 +380,10 @@ static void hook_ui_window(void) {
 
             NSLog(@"[WizardBypass] UIWindow makeKeyAndVisible: %@, rootVC: %@", className, vcClassName);
 
-            // Block if it's an alert window
-            if ([className containsString:@"Alert"] || [vcClassName containsString:@"Alert"] ||
-                [vcClassName containsString:@"SCL"]) {
+            // ONLY block actual alert windows, not all SCL* classes
+            if ([className containsString:@"Alert"] ||
+                [vcClassName isEqualToString:@"SCLAlertView"] ||
+                [vcClassName containsString:@"UIAlertController"]) {
                 NSLog(@"[WizardBypass] ✓✓✓ BLOCKED UIWindow makeKeyAndVisible ✓✓✓");
                 return;
             }
@@ -405,8 +407,11 @@ static void hook_ui_window(void) {
 
             NSLog(@"[WizardBypass] UIWindow addSubview: %@", viewClassName);
 
-            // Block if it's an alert view
-            if ([viewClassName containsString:@"Alert"] || [viewClassName containsString:@"SCL"]) {
+            // ONLY block SCLAlertView itself, not other SCL* classes (like SCLTextView, SCLButton)
+            // These are legitimate game UI components
+            if ([viewClassName isEqualToString:@"SCLAlertView"] ||
+                [viewClassName containsString:@"AlertView"] ||
+                [viewClassName containsString:@"UIAlertController"]) {
                 NSLog(@"[WizardBypass] ✓✓✓ BLOCKED UIWindow addSubview: %@ ✓✓✓", viewClassName);
                 return;
             }
