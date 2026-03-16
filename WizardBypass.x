@@ -148,7 +148,7 @@ static void hook_user_defaults(void) {
         return;
     }
 
-    // Hook objectForKey: - ONLY LOG, don't modify yet
+    // Hook objectForKey: - Fake auth-token-type specifically
     SEL selector1 = @selector(objectForKey:);
     Method method1 = class_getInstanceMethod(defaults_class, selector1);
     if (method1) {
@@ -164,13 +164,18 @@ static void hook_user_defaults(void) {
                 [key containsString:@"token"] || [key containsString:@"premium"]) {
                 NSLog(@"[WizardBypass] objectForKey: '%@' -> %@ (type: %@)",
                       key, result, [result class]);
+
+                // FAKE auth-token-type specifically
+                if ([key isEqualToString:@"auth-token-type"] && !result) {
+                    NSLog(@"[WizardBypass] *** FAKING auth-token-type -> 'premium'");
+                    return @"premium";
+                }
             }
 
-            // Don't modify - just return original
             return result;
         });
         method_setImplementation(method1, new_imp);
-        NSLog(@"[WizardBypass] NSUserDefaults objectForKey: monitor installed");
+        NSLog(@"[WizardBypass] NSUserDefaults objectForKey: hook installed");
     }
 
     // Hook boolForKey: - ONLY LOG
