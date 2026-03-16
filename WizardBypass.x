@@ -219,6 +219,57 @@ static void hook_scl_alert_view(void) {
 }
 
 // ============================================================================
+// DELAYED HOOK - Run after Wizard loads
+// ============================================================================
+
+static void delayed_hook(void) {
+    NSLog(@"[WizardBypass] ========================================");
+    NSLog(@"[WizardBypass] DELAYED HOOK - Wizard should be loaded now");
+    NSLog(@"[WizardBypass] ========================================");
+
+    // Try to patch the trap again now that Wizard is loaded
+    NSLog(@"[WizardBypass] Attempting to patch 0xdead trap (delayed)...");
+
+    // Find Wizard.framework base address
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char* name = _dyld_get_image_name(i);
+        if (name && strstr(name, "Wizard.framework")) {
+            const struct mach_header* header = (const struct mach_header*)_dyld_get_image_header(i);
+            uintptr_t base = (uintptr_t)header;
+            NSLog(@"[WizardBypass] ✓ Found Wizard base: 0x%lx", base);
+
+            // Patch the 0xdead trap
+            uintptr_t trap_addr = base + 0x39da9c;  // Offset from analysis
+            NSLog(@"[WizardBypass] Trap address: 0x%lx", trap_addr);
+
+            // Change memory protection
+            kern_return_t kr = vm_protect(mach_task_self(),
+                                           (vm_address_t)(trap_addr & ~0xFFF),
+                                           0x1000,
+                                           FALSE,
+                                           VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+
+            if (kr == KERN_SUCCESS) {
+                uint32_t* instruction = (uint32_t*)trap_addr;
+                uint32_t original = *instruction;
+                NSLog(@"[WizardBypass] Original instruction: 0x%08x", original);
+
+                // Patch to NOP
+                *instruction = 0xD503201F;
+                NSLog(@"[WizardBypass] ✓ Patched 0xdead trap!");
+            } else {
+                NSLog(@"[WizardBypass] ERROR: vm_protect failed: %d", kr);
+            }
+            break;
+        }
+    }
+
+    // Re-hook SCLAlertView now that everything is loaded
+    NSLog(@"[WizardBypass] Re-hooking SCLAlertView...");
+    hook_scl_alert_view();
+}
+
+// ============================================================================
 // PHASE 5: CONSTRUCTOR - Run everything EARLY
 // ============================================================================
 
@@ -244,6 +295,13 @@ static void wizard_bypass_init(void) {
     // Phase 4: Hook popup display
     NSLog(@"[WizardBypass] Phase 4: Hooking SCLAlertView...");
     hook_scl_alert_view();
+
+    // Phase 5: Schedule delayed hook after 2 seconds
+    NSLog(@"[WizardBypass] Phase 5: Scheduling delayed hook in 2 seconds...");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        delayed_hook();
+    });
 
     NSLog(@"[WizardBypass] ========================================");
     NSLog(@"[WizardBypass] Initialization complete!");
