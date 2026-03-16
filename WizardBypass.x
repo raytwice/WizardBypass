@@ -228,38 +228,54 @@ static void delayed_hook(void) {
     NSLog(@"[WizardBypass] ========================================");
 
     // Try to patch the trap again now that Wizard is loaded
-    NSLog(@"[WizardBypass] Attempting to patch 0xdead trap (delayed)...");
+    NSLog(@"[WizardBypass] Searching for 0xdead trap (delayed)...");
 
     // Find Wizard.framework base address
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char* name = _dyld_get_image_name(i);
         if (name && strstr(name, "Wizard.framework")) {
-            const struct mach_header* header = (const struct mach_header*)_dyld_get_image_header(i);
+            const struct mach_header_64* header = (const struct mach_header_64*)_dyld_get_image_header(i);
             uintptr_t base = (uintptr_t)header;
             NSLog(@"[WizardBypass] ✓ Found Wizard base: 0x%lx", base);
 
-            // Patch the 0xdead trap
-            uintptr_t trap_addr = base + 0x39da9c;  // Offset from analysis
-            NSLog(@"[WizardBypass] Trap address: 0x%lx", trap_addr);
+            // Search for MOVZ W8, #0xdead instruction (0x52BD5DA8 or 0xA85DBD52 depending on endianness)
+            // We'll search the __TEXT segment
+            uintptr_t search_start = base;
+            uintptr_t search_end = base + 0x2000000;  // Search first 32MB
 
-            // Change memory protection
-            kern_return_t kr = vm_protect(mach_task_self(),
-                                           (vm_address_t)(trap_addr & ~0xFFF),
-                                           0x1000,
-                                           FALSE,
-                                           VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+            NSLog(@"[WizardBypass] Searching for 0xdead pattern...");
 
-            if (kr == KERN_SUCCESS) {
-                uint32_t* instruction = (uint32_t*)trap_addr;
-                uint32_t original = *instruction;
-                NSLog(@"[WizardBypass] Original instruction: 0x%08x", original);
+            BOOL found = NO;
+            for (uintptr_t addr = search_start; addr < search_end; addr += 4) {
+                uint32_t* instruction = (uint32_t*)addr;
 
-                // Patch to NOP
-                *instruction = 0xD503201F;
-                NSLog(@"[WizardBypass] ✓ Patched 0xdead trap!");
-            } else {
-                NSLog(@"[WizardBypass] ERROR: vm_protect failed: %d", kr);
+                // Check if it's MOVZ W8, #0xdead (various encodings)
+                if (*instruction == 0x52BD5DA8 || *instruction == 0xA85DBD52) {
+                    NSLog(@"[WizardBypass] ✓ Found 0xdead trap at offset: 0x%lx", addr - base);
+
+                    // Change memory protection
+                    kern_return_t kr = vm_protect(mach_task_self(),
+                                                   (vm_address_t)(addr & ~0xFFF),
+                                                   0x1000,
+                                                   FALSE,
+                                                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+
+                    if (kr == KERN_SUCCESS) {
+                        NSLog(@"[WizardBypass] Original instruction: 0x%08x", *instruction);
+                        *instruction = 0xD503201F;  // NOP
+                        NSLog(@"[WizardBypass] ✓ Patched to NOP!");
+                        found = YES;
+                        break;
+                    } else {
+                        NSLog(@"[WizardBypass] ERROR: vm_protect failed: %d", kr);
+                    }
+                }
             }
+
+            if (!found) {
+                NSLog(@"[WizardBypass] WARNING: 0xdead trap not found - maybe not needed?");
+            }
+
             break;
         }
     }
