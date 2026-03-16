@@ -54,8 +54,9 @@ jobs:
       run: |
         export THEOS=$HOME/theos
         cd ${{ github.workspace }}
+        rm -rf .theos
         make -f Makefile.bypass clean
-        make -f Makefile.bypass package
+        make -f Makefile.bypass package FINALPACKAGE=1
 
     - name: Upload Wizard bypass dylib
       uses: actions/upload-artifact@v4
