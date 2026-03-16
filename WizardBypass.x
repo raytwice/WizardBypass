@@ -192,13 +192,6 @@ static void swizzled_showTitle(id self, SEL _cmd, NSString* title, NSString* sub
     return;
 }
 
-    // Call original for other popups
-    if (original_showTitle) {
-        ((void(*)(id, SEL, NSString*, NSString*, NSInteger, NSString*, NSTimeInterval))original_showTitle)
-            (self, _cmd, title, subTitle, style, closeButtonTitle, duration);
-    }
-}
-
 static void hook_scl_alert_view(void) {
     NSLog(@"[WizardBypass] Hooking SCLAlertView...");
 
