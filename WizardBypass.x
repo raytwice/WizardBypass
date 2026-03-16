@@ -164,39 +164,33 @@ static IMP original_showTitle = NULL;
 static void swizzled_showCustom(id self, SEL _cmd, UIImage* image, UIColor* color,
                                  NSString* title, NSString* subTitle,
                                  NSString* closeButtonTitle, NSTimeInterval duration) {
-    NSLog(@"[WizardBypass] SCLAlertView showCustom: %@ - %@", title, subTitle);
+    NSLog(@"[WizardBypass] ========================================");
+    NSLog(@"[WizardBypass] SCLAlertView showCustom called!");
+    NSLog(@"[WizardBypass] Title: %@", title);
+    NSLog(@"[WizardBypass] SubTitle: %@", subTitle);
+    NSLog(@"[WizardBypass] CloseButton: %@", closeButtonTitle);
+    NSLog(@"[WizardBypass] ========================================");
 
-    // Block auth popups
-    if ([title containsString:@"Wizard"] ||
-        [title containsString:@"Authentication"] ||
-        [subTitle containsString:@"key"] ||
-        [subTitle containsString:@"auth"] ||
-        [subTitle containsString:@"license"]) {
-        NSLog(@"[WizardBypass] ✓ BLOCKED auth popup!");
-        return;
-    }
-
-    // Call original for other popups
-    if (original_showCustom) {
-        ((void(*)(id, SEL, UIImage*, UIColor*, NSString*, NSString*, NSString*, NSTimeInterval))original_showCustom)
-            (self, _cmd, image, color, title, subTitle, closeButtonTitle, duration);
-    }
+    // BLOCK ALL POPUPS - we'll refine this later
+    NSLog(@"[WizardBypass] ✓ BLOCKED popup!");
+    return;
 }
 
 // Swizzled showTitle method
 static void swizzled_showTitle(id self, SEL _cmd, NSString* title, NSString* subTitle,
                                 NSInteger style, NSString* closeButtonTitle, NSTimeInterval duration) {
-    NSLog(@"[WizardBypass] SCLAlertView showTitle: %@ - %@", title, subTitle);
+    NSLog(@"[WizardBypass] ========================================");
+    NSLog(@"[WizardBypass] SCLAlertView showTitle called!");
+    NSLog(@"[WizardBypass] Title: %@", title);
+    NSLog(@"[WizardBypass] SubTitle: %@", subTitle);
+    NSLog(@"[WizardBypass] Style: %ld", (long)style);
+    NSLog(@"[WizardBypass] CloseButton: %@", closeButtonTitle);
+    NSLog(@"[WizardBypass] ========================================");
 
-    // Block auth popups
-    if ([title containsString:@"Wizard"] ||
-        [title containsString:@"Authentication"] ||
-        [subTitle containsString:@"key"] ||
-        [subTitle containsString:@"auth"] ||
-        [subTitle containsString:@"license"]) {
-        NSLog(@"[WizardBypass] ✓ BLOCKED auth popup!");
-        return;
-    }
+    // BLOCK ALL POPUPS
+    NSLog(@"[WizardBypass] ✓ BLOCKED popup!");
+    return;
+}
 
     // Call original for other popups
     if (original_showTitle) {
