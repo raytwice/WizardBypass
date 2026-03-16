@@ -49,67 +49,12 @@ const char* hooked_dyld_get_image_name(uint32_t index) {
 }
 
 // ============================================================================
-// PHASE 2: ANTI-TAMPER BYPASS - Patch the 0xdead trap
+// PHASE 2: REMOVED - Memory patching causes KERN_PROTECTION_FAILURE
 // ============================================================================
-
-static void patch_dead_trap(void) {
-    NSLog(@"[WizardBypass] Searching for 0xdead trap...");
-
-    // Find Wizard.framework base address
-    void* wizard_handle = dlopen("@rpath/Wizard.framework/Wizard", RTLD_NOLOAD);
-    if (!wizard_handle) {
-        NSLog(@"[WizardBypass] ERROR: Cannot find Wizard.framework");
-        return;
-    }
-
-    Dl_info info;
-    if (dladdr(wizard_handle, &info) == 0) {
-        NSLog(@"[WizardBypass] ERROR: Cannot get Wizard base address");
-        return;
-    }
-
-    uintptr_t base = (uintptr_t)info.dli_fbase;
-    NSLog(@"[WizardBypass] Wizard base address: 0x%lx", base);
-
-    // Known trap location: 0xb1fa3c (from analysis)
-    // Instruction: MOVZ W8, #0xdead (0x52BD5DA8)
-    uintptr_t trap_addr = base + 0xb1fa3c;
-
-    NSLog(@"[WizardBypass] Attempting to patch trap at 0x%lx", trap_addr);
-
-    // Change memory protection to RWX
-    kern_return_t kr = vm_protect(mach_task_self(),
-                                   (vm_address_t)(trap_addr & ~0xFFF),
-                                   0x1000,
-                                   FALSE,
-                                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-
-    if (kr != KERN_SUCCESS) {
-        NSLog(@"[WizardBypass] ERROR: vm_protect failed: %d", kr);
-        return;
-    }
-
-    // Patch: Replace MOVZ W8, #0xdead with NOP (0xD503201F)
-    uint32_t* instruction = (uint32_t*)trap_addr;
-    uint32_t original = *instruction;
-
-    NSLog(@"[WizardBypass] Original instruction: 0x%08x", original);
-
-    if (original == 0x52BD5DA8) {  // Verify it's the MOVZ instruction
-        *instruction = 0xD503201F;  // NOP
-        NSLog(@"[WizardBypass] ✓ Patched 0xdead trap successfully!");
-    } else {
-        NSLog(@"[WizardBypass] WARNING: Instruction mismatch, patching anyway");
-        *instruction = 0xD503201F;  // NOP
-    }
-
-    // Restore protection
-    vm_protect(mach_task_self(),
-               (vm_address_t)(trap_addr & ~0xFFF),
-               0x1000,
-               FALSE,
-               VM_PROT_READ | VM_PROT_EXECUTE);
-}
+// The patch_dead_trap() function has been removed because:
+// - vm_protect() fails on iOS due to code signing
+// - Attempting to write to read-only memory causes SIGBUS crash
+// - Method swizzling is the correct approach for iOS
 
 // ============================================================================
 // PHASE 3: AUTH FLAG MANIPULATION - Force authentication to succeed
@@ -219,7 +164,87 @@ static void hook_scl_alert_view(void) {
 }
 
 // ============================================================================
-// DELAYED HOOK - Run after Wizard loads
+// PHASE 4B: HOOK UIAlertController
+// ============================================================================
+
+static void hook_ui_alert_controller(void) {
+    NSLog(@"[WizardBypass] Hooking UIAlertController...");
+
+    Class alert_class = objc_getClass("UIAlertController");
+    if (!alert_class) {
+        NSLog(@"[WizardBypass] WARNING: UIAlertController not found");
+        return;
+    }
+
+    // Hook alertControllerWithTitle:message:preferredStyle:
+    SEL selector = @selector(alertControllerWithTitle:message:preferredStyle:);
+    Method method = class_getClassMethod(alert_class, selector);
+
+    if (method) {
+        IMP original_imp = method_getImplementation(method);
+        IMP new_imp = imp_implementationWithBlock(^UIAlertController*(Class self, NSString* title, NSString* message, UIAlertControllerStyle style) {
+            // Check if this is an auth-related alert
+            NSString* lowerTitle = [title lowercaseString];
+            NSString* lowerMsg = [message lowercaseString];
+
+            if ([lowerTitle containsString:@"auth"] || [lowerTitle containsString:@"license"] ||
+                [lowerTitle containsString:@"key"] || [lowerTitle containsString:@"wizard"] ||
+                [lowerMsg containsString:@"auth"] || [lowerMsg containsString:@"license"]) {
+                NSLog(@"[WizardBypass] ✓ BLOCKED UIAlertController: %@", title);
+                return nil;
+            }
+
+            // Call original for non-auth alerts
+            typedef UIAlertController* (*OrigFunc)(Class, SEL, NSString*, NSString*, UIAlertControllerStyle);
+            return ((OrigFunc)original_imp)(self, selector, title, message, style);
+        });
+
+        method_setImplementation(method, new_imp);
+        NSLog(@"[WizardBypass] UIAlertController hook installed");
+    }
+}
+
+// ============================================================================
+// PHASE 4C: HOOK UIViewController presentation
+// ============================================================================
+
+static void hook_view_controller_presentation(void) {
+    NSLog(@"[WizardBypass] Hooking UIViewController presentation...");
+
+    Class vc_class = objc_getClass("UIViewController");
+    if (!vc_class) {
+        NSLog(@"[WizardBypass] WARNING: UIViewController not found");
+        return;
+    }
+
+    // Hook presentViewController:animated:completion:
+    SEL selector = @selector(presentViewController:animated:completion:);
+    Method method = class_getInstanceMethod(vc_class, selector);
+
+    if (method) {
+        IMP original_imp = method_getImplementation(method);
+        IMP new_imp = imp_implementationWithBlock(^(UIViewController* self, UIViewController* vc, BOOL animated, void(^completion)(void)) {
+            NSString* className = NSStringFromClass([vc class]);
+
+            // Block alert-related view controllers
+            if ([className containsString:@"Alert"] || [className containsString:@"SCL"]) {
+                NSLog(@"[WizardBypass] ✓ BLOCKED presentation of: %@", className);
+                if (completion) completion();
+                return;
+            }
+
+            // Call original for non-alert VCs
+            typedef void (*OrigFunc)(UIViewController*, SEL, UIViewController*, BOOL, void(^)(void));
+            ((OrigFunc)original_imp)(self, selector, vc, animated, completion);
+        });
+
+        method_setImplementation(method, new_imp);
+        NSLog(@"[WizardBypass] UIViewController presentation hook installed");
+    }
+}
+
+// ============================================================================
+// DELAYED HOOK - Re-hook after Wizard loads (NO MEMORY PATCHING)
 // ============================================================================
 
 static void delayed_hook(void) {
@@ -227,62 +252,20 @@ static void delayed_hook(void) {
     NSLog(@"[WizardBypass] DELAYED HOOK - Wizard should be loaded now");
     NSLog(@"[WizardBypass] ========================================");
 
-    // Try to patch the trap again now that Wizard is loaded
-    NSLog(@"[WizardBypass] Searching for 0xdead trap (delayed)...");
-
-    // Find Wizard.framework base address
-    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
-        const char* name = _dyld_get_image_name(i);
-        if (name && strstr(name, "Wizard.framework")) {
-            const struct mach_header_64* header = (const struct mach_header_64*)_dyld_get_image_header(i);
-            uintptr_t base = (uintptr_t)header;
-            NSLog(@"[WizardBypass] ✓ Found Wizard base: 0x%lx", base);
-
-            // Search for MOVZ W8, #0xdead instruction (0x52BD5DA8 or 0xA85DBD52 depending on endianness)
-            // We'll search the __TEXT segment
-            uintptr_t search_start = base;
-            uintptr_t search_end = base + 0x2000000;  // Search first 32MB
-
-            NSLog(@"[WizardBypass] Searching for 0xdead pattern...");
-
-            BOOL found = NO;
-            for (uintptr_t addr = search_start; addr < search_end; addr += 4) {
-                uint32_t* instruction = (uint32_t*)addr;
-
-                // Check if it's MOVZ W8, #0xdead (various encodings)
-                if (*instruction == 0x52BD5DA8 || *instruction == 0xA85DBD52) {
-                    NSLog(@"[WizardBypass] ✓ Found 0xdead trap at offset: 0x%lx", addr - base);
-
-                    // Change memory protection
-                    kern_return_t kr = vm_protect(mach_task_self(),
-                                                   (vm_address_t)(addr & ~0xFFF),
-                                                   0x1000,
-                                                   FALSE,
-                                                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-
-                    if (kr == KERN_SUCCESS) {
-                        NSLog(@"[WizardBypass] Original instruction: 0x%08x", *instruction);
-                        *instruction = 0xD503201F;  // NOP
-                        NSLog(@"[WizardBypass] ✓ Patched to NOP!");
-                        found = YES;
-                        break;
-                    } else {
-                        NSLog(@"[WizardBypass] ERROR: vm_protect failed: %d", kr);
-                    }
-                }
-            }
-
-            if (!found) {
-                NSLog(@"[WizardBypass] WARNING: 0xdead trap not found - maybe not needed?");
-            }
-
-            break;
-        }
-    }
-
-    // Re-hook SCLAlertView now that everything is loaded
+    // Re-hook SCLAlertView now that Wizard is fully loaded
     NSLog(@"[WizardBypass] Re-hooking SCLAlertView...");
     hook_scl_alert_view();
+
+    // Hook UIAlertController
+    hook_ui_alert_controller();
+
+    // Hook UIViewController presentation
+    hook_view_controller_presentation();
+
+    // Try to force authentication state
+    force_authentication();
+
+    NSLog(@"[WizardBypass] Delayed hook complete - all hooks refreshed");
 }
 
 // ============================================================================
@@ -292,27 +275,26 @@ static void delayed_hook(void) {
 __attribute__((constructor(101)))
 static void wizard_bypass_init(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] NUCLEAR OPTION - EARLY INIT (Priority 101)");
+    NSLog(@"[WizardBypass] METHOD SWIZZLING ONLY - EARLY INIT (Priority 101)");
     NSLog(@"[WizardBypass] ========================================");
 
-    // Phase 1: Hide our dylib from detection
-    NSLog(@"[WizardBypass] Phase 1: Hiding dylib...");
-    // Note: Function hooking would require fishhook or similar
-    // For now, just log that we're here
-
-    // Phase 2: Patch anti-tamper trap
-    NSLog(@"[WizardBypass] Phase 2: Patching anti-tamper...");
-    patch_dead_trap();
-
-    // Phase 3: Force authentication
-    NSLog(@"[WizardBypass] Phase 3: Forcing authentication...");
+    // Phase 1: Force authentication
+    NSLog(@"[WizardBypass] Phase 1: Forcing authentication...");
     force_authentication();
 
-    // Phase 4: Hook popup display
-    NSLog(@"[WizardBypass] Phase 4: Hooking SCLAlertView...");
+    // Phase 2: Hook popup display (SCLAlertView)
+    NSLog(@"[WizardBypass] Phase 2: Hooking SCLAlertView...");
     hook_scl_alert_view();
 
-    // Phase 5: Schedule delayed hook after 2 seconds
+    // Phase 3: Hook UIAlertController
+    NSLog(@"[WizardBypass] Phase 3: Hooking UIAlertController...");
+    hook_ui_alert_controller();
+
+    // Phase 4: Hook UIViewController presentation
+    NSLog(@"[WizardBypass] Phase 4: Hooking UIViewController presentation...");
+    hook_view_controller_presentation();
+
+    // Phase 5: Schedule delayed hook after 2 seconds (when Wizard is fully loaded)
     NSLog(@"[WizardBypass] Phase 5: Scheduling delayed hook in 2 seconds...");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
@@ -320,6 +302,6 @@ static void wizard_bypass_init(void) {
     });
 
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] Initialization complete!");
+    NSLog(@"[WizardBypass] Initialization complete - NO MEMORY PATCHING!");
     NSLog(@"[WizardBypass] ========================================");
 }
