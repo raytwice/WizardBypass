@@ -38,12 +38,15 @@ jobs:
         rm -rf .theos
         make -f Makefile.wizard clean
         make -f Makefile.wizard
+        # Find and copy the dylib to a known location
+        find .theos -name "WizardBypass.dylib" -exec cp {} ./WizardBypass.dylib \;
+        ls -la WizardBypass.dylib
 
     - name: Verify no CydiaSubstrate dependency
       run: |
         cd ${{ github.workspace }}
-        otool -L .theos/obj/WizardBypass.dylib
-        if otool -L .theos/obj/WizardBypass.dylib | grep -i "CydiaSubstrate"; then
+        otool -L WizardBypass.dylib
+        if otool -L WizardBypass.dylib | grep -i "CydiaSubstrate"; then
           echo "ERROR: CydiaSubstrate dependency found!"
           exit 1
         fi
@@ -53,4 +56,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: WizardBypass-dylib
-        path: .theos/obj/WizardBypass.dylib
+        path: WizardBypass.dylib
