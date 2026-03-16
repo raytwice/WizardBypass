@@ -92,6 +92,34 @@ static void force_authentication(void) {
         NSLog(@"[WizardBypass] Scanning Wizard class: %s", class_name);
         hooked_classes++;
 
+        // SPECIAL: Hook init methods for key obfuscated classes
+        if (strcmp(class_name, "Pajdsakdfj") == 0 || strcmp(class_name, "Wksahfnasj") == 0) {
+            NSLog(@"[WizardBypass] *** FOUND KEY CLASS: %s - Hooking ALL methods ***", class_name);
+
+            unsigned int all_method_count;
+            Method* all_methods = class_copyMethodList(classes[i], &all_method_count);
+
+            for (unsigned int k = 0; k < all_method_count; k++) {
+                SEL sel = method_getName(all_methods[k]);
+                const char* method_name = sel_getName(sel);
+
+                NSLog(@"[WizardBypass]   Method: %s::%s", class_name, method_name);
+
+                // Hook ALL methods to log when they're called
+                IMP original = method_getImplementation(all_methods[k]);
+                IMP new_imp = imp_implementationWithBlock(^id(id self, ...) {
+                    NSLog(@"[WizardBypass] *** CALLED: %s::%s ***", class_name, method_name);
+
+                    // Call original
+                    typedef id (*OrigFunc)(id, SEL, ...);
+                    return ((OrigFunc)original)(self, sel);
+                });
+                method_setImplementation(all_methods[k], new_imp);
+            }
+
+            free(all_methods);
+        }
+
         unsigned int method_count;
         Method* methods = class_copyMethodList(classes[i], &method_count);
 
