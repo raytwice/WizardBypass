@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #import <QuartzCore/QuartzCore.h>
