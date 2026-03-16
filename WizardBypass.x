@@ -62,96 +62,76 @@ const char* hooked_dyld_get_image_name(uint32_t index) {
 
 static void force_authentication(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] FORCING AUTHENTICATION - HOOK ALL METHODS");
+    NSLog(@"[WizardBypass] FORCING AUTHENTICATION - SMART APPROACH");
     NSLog(@"[WizardBypass] ========================================");
 
-    // Hook ALL methods in obfuscated auth classes
-    const char* auth_classes[] = {
-        "ABVJSMGADJS",
-        "AJFADSHFSAJXN",
-        "Kmsjfaigh",
-        "Mjshjgkash",
-        "Pajdsakdfj",
-        "Wksahfnasj",
-        NULL
-    };
+    // Strategy: Hook ALL classes in Wizard.framework that might check auth
+    // Look for methods that return BOOL and might be validation checks
 
-    for (int i = 0; auth_classes[i] != NULL; i++) {
-        Class cls = objc_getClass(auth_classes[i]);
-        if (cls) {
-            NSLog(@"[WizardBypass] Found auth class: %s", auth_classes[i]);
+    unsigned int class_count;
+    Class *classes = objc_copyClassList(&class_count);
 
-            unsigned int method_count;
-            Method* methods = class_copyMethodList(cls, &method_count);
+    int hooked_classes = 0;
+    int hooked_methods = 0;
 
-            NSLog(@"[WizardBypass]   Total methods in %s: %u", auth_classes[i], method_count);
+    for (unsigned int i = 0; i < class_count; i++) {
+        const char* class_name = class_getName(classes[i]);
 
-            // Hook EVERY method in this class
-            for (unsigned int j = 0; j < method_count; j++) {
-                SEL selector = method_getName(methods[j]);
-                const char* name = sel_getName(selector);
-                char* type_encoding = method_copyReturnType(methods[j]);
+        // Only hook classes from Wizard.framework (not system classes)
+        // Check if class is defined in Wizard by checking its image
+        const char* image_name = class_getImageName(classes[i]);
+        if (!image_name || !strstr(image_name, "Wizard.framework")) {
+            continue;
+        }
 
-                // Skip setters - we only want to hook getters/checkers
-                if (strncmp(name, "set", 3) == 0 && name[3] >= 'A' && name[3] <= 'Z') {
-                    free(type_encoding);
-                    continue;
-                }
+        // Skip SCL classes (UI components)
+        if (strncmp(class_name, "SCL", 3) == 0) {
+            continue;
+        }
 
-                // Determine return type and hook appropriately
-                if (type_encoding[0] == 'c' || type_encoding[0] == 'B') {
-                    // BOOL return type - return YES
-                    NSLog(@"[WizardBypass]   Hooking BOOL method: %s -> YES", name);
-                    IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
-                        return YES;
-                    });
-                    method_setImplementation(methods[j], new_imp);
-                }
-                else if (type_encoding[0] == '@') {
-                    // Object return type - return @YES or self
-                    NSLog(@"[WizardBypass]   Hooking Object method: %s -> @YES", name);
-                    IMP new_imp = imp_implementationWithBlock(^id(id self) {
-                        return @YES;
-                    });
-                    method_setImplementation(methods[j], new_imp);
-                }
-                else if (type_encoding[0] == 'i' || type_encoding[0] == 'q' ||
-                         type_encoding[0] == 'I' || type_encoding[0] == 'Q') {
-                    // Integer return type - return 1
-                    NSLog(@"[WizardBypass]   Hooking Integer method: %s -> 1", name);
-                    IMP new_imp = imp_implementationWithBlock(^NSInteger(id self) {
-                        return 1;
-                    });
-                    method_setImplementation(methods[j], new_imp);
-                }
-                else if (type_encoding[0] == 'f' || type_encoding[0] == 'd') {
-                    // Float/Double return type - return 1.0
-                    NSLog(@"[WizardBypass]   Hooking Float method: %s -> 1.0", name);
-                    IMP new_imp = imp_implementationWithBlock(^double(id self) {
-                        return 1.0;
-                    });
-                    method_setImplementation(methods[j], new_imp);
-                }
-                else if (type_encoding[0] == 'v') {
-                    // Void return type - just log, don't hook
-                    NSLog(@"[WizardBypass]   Skipping void method: %s", name);
-                }
-                else {
-                    NSLog(@"[WizardBypass]   Unknown type '%c' for method: %s", type_encoding[0], name);
-                }
+        NSLog(@"[WizardBypass] Scanning Wizard class: %s", class_name);
+        hooked_classes++;
 
+        unsigned int method_count;
+        Method* methods = class_copyMethodList(classes[i], &method_count);
+
+        for (unsigned int j = 0; j < method_count; j++) {
+            SEL selector = method_getName(methods[j]);
+            const char* name = sel_getName(selector);
+            char* type_encoding = method_copyReturnType(methods[j]);
+
+            // Skip lifecycle methods
+            if (strncmp(name, "init", 4) == 0 ||
+                strncmp(name, "set", 3) == 0 ||
+                strcmp(name, "dealloc") == 0 ||
+                strcmp(name, ".cxx_destruct") == 0) {
                 free(type_encoding);
+                continue;
             }
 
-            free(methods);
-            NSLog(@"[WizardBypass] Finished hooking class: %s", auth_classes[i]);
-        } else {
-            NSLog(@"[WizardBypass] WARNING: Auth class not found: %s", auth_classes[i]);
+            // Only hook BOOL-returning methods (likely validation checks)
+            if (type_encoding[0] == 'c' || type_encoding[0] == 'B') {
+                NSLog(@"[WizardBypass]   Hooking BOOL: %s::%s -> YES", class_name, name);
+
+                IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
+                    NSLog(@"[WizardBypass]   *** CALLED: %s::%s -> returning YES", class_name, name);
+                    return YES;
+                });
+                method_setImplementation(methods[j], new_imp);
+                hooked_methods++;
+            }
+
+            free(type_encoding);
         }
+
+        free(methods);
     }
 
+    free(classes);
+
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] AUTH HOOKING COMPLETE");
+    NSLog(@"[WizardBypass] Scanned %d Wizard classes", hooked_classes);
+    NSLog(@"[WizardBypass] Hooked %d BOOL methods", hooked_methods);
     NSLog(@"[WizardBypass] ========================================");
 }
 
