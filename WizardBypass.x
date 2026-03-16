@@ -680,15 +680,24 @@ static void delayed_hook(void) {
                     }
 
                     if (keyWindow) {
-                        // Create menu with initWithFrame: (not init)
+                        // Create menu with initWithFrame:type: (like Pajdsakdfj)
                         CGRect menuFrame = CGRectMake(50, 50, keyWindow.bounds.size.width - 100, keyWindow.bounds.size.height - 100);
 
-                        SEL initFrameSel = @selector(initWithFrame:);
-                        if ([menuClass instancesRespondToSelector:initFrameSel]) {
-                            id menuInstance = [[menuClass alloc] initWithFrame:menuFrame];
+                        // Try initWithFrame:type: first (same as icon creation)
+                        SEL initFrameTypeSel = @selector(initWithFrame:type:);
+                        if ([menuClass instancesRespondToSelector:initFrameTypeSel]) {
+                            NSLog(@"[WizardBypass] Wksahfnasj responds to initWithFrame:type:, using it...");
+
+                            // Use objc_msgSend to call initWithFrame:type: with type=0
+                            id menuInstance = ((id (*)(id, SEL, CGRect, NSInteger))objc_msgSend)(
+                                [menuClass alloc],
+                                initFrameTypeSel,
+                                menuFrame,
+                                0  // type = 0 (normal menu, like icon)
+                            );
 
                             if (menuInstance) {
-                                NSLog(@"[WizardBypass] Created menu instance: %@", menuInstance);
+                                NSLog(@"[WizardBypass] ✓ Created menu instance with initWithFrame:type:: %@", menuInstance);
 
                                 // Set it visible
                                 [(UIView*)menuInstance setHidden:NO];
@@ -701,10 +710,35 @@ static void delayed_hook(void) {
 
                                 NSLog(@"[WizardBypass] ✓✓✓ Menu added to window!");
                             } else {
-                                NSLog(@"[WizardBypass] Failed to create menu instance");
+                                NSLog(@"[WizardBypass] initWithFrame:type: returned nil");
                             }
                         } else {
-                            NSLog(@"[WizardBypass] Wksahfnasj doesn't respond to initWithFrame:");
+                            // Fallback to initWithFrame:
+                            NSLog(@"[WizardBypass] Wksahfnasj doesn't respond to initWithFrame:type:, trying initWithFrame:...");
+
+                            SEL initFrameSel = @selector(initWithFrame:);
+                            if ([menuClass instancesRespondToSelector:initFrameSel]) {
+                                id menuInstance = [[menuClass alloc] initWithFrame:menuFrame];
+
+                                if (menuInstance) {
+                                    NSLog(@"[WizardBypass] Created menu instance: %@", menuInstance);
+
+                                    // Set it visible
+                                    [(UIView*)menuInstance setHidden:NO];
+                                    [(UIView*)menuInstance setAlpha:1.0];
+                                    [(UIView*)menuInstance setBackgroundColor:[UIColor colorWithWhite:0.1 alpha:0.9]];
+
+                                    // Add to window
+                                    [keyWindow addSubview:(UIView*)menuInstance];
+                                    [keyWindow bringSubviewToFront:(UIView*)menuInstance];
+
+                                    NSLog(@"[WizardBypass] ✓✓✓ Menu added to window!");
+                                } else {
+                                    NSLog(@"[WizardBypass] initWithFrame: returned nil");
+                                }
+                            } else {
+                                NSLog(@"[WizardBypass] Wksahfnasj doesn't respond to initWithFrame: either");
+                            }
                         }
                     } else {
                         NSLog(@"[WizardBypass] No key window found for menu");
