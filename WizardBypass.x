@@ -665,23 +665,49 @@ static void delayed_hook(void) {
                 if (menuClass) {
                     NSLog(@"[WizardBypass] Found Wksahfnasj (menu class)");
 
-                    // Try to create and show menu
-                    id menuInstance = [[menuClass alloc] init];
-                    if (menuInstance) {
-                        NSLog(@"[WizardBypass] Created menu instance: %@", menuInstance);
-
-                        // Try common show methods
-                        SEL showSel = NSSelectorFromString(@"show");
-                        if ([menuInstance respondsToSelector:showSel]) {
-                            NSLog(@"[WizardBypass] Calling show method");
-                            ((void (*)(id, SEL))objc_msgSend)(menuInstance, showSel);
+                    // Get the key window
+                    UIWindow* keyWindow = nil;
+                    NSArray* windows = [[UIApplication sharedApplication] windows];
+                    for (UIWindow* window in windows) {
+                        if (window.isKeyWindow) {
+                            keyWindow = window;
+                            break;
                         }
+                    }
 
-                        SEL presentSel = NSSelectorFromString(@"present");
-                        if ([menuInstance respondsToSelector:presentSel]) {
-                            NSLog(@"[WizardBypass] Calling present method");
-                            ((void (*)(id, SEL))objc_msgSend)(menuInstance, presentSel);
+                    if (!keyWindow && [windows count] > 0) {
+                        keyWindow = [windows objectAtIndex:0];
+                    }
+
+                    if (keyWindow) {
+                        // Create menu with initWithFrame: (not init)
+                        CGRect menuFrame = CGRectMake(50, 50, keyWindow.bounds.size.width - 100, keyWindow.bounds.size.height - 100);
+
+                        SEL initFrameSel = @selector(initWithFrame:);
+                        if ([menuClass instancesRespondToSelector:initFrameSel]) {
+                            id menuInstance = [[menuClass alloc] initWithFrame:menuFrame];
+
+                            if (menuInstance) {
+                                NSLog(@"[WizardBypass] Created menu instance: %@", menuInstance);
+
+                                // Set it visible
+                                [(UIView*)menuInstance setHidden:NO];
+                                [(UIView*)menuInstance setAlpha:1.0];
+                                [(UIView*)menuInstance setBackgroundColor:[UIColor colorWithWhite:0.1 alpha:0.9]];
+
+                                // Add to window
+                                [keyWindow addSubview:(UIView*)menuInstance];
+                                [keyWindow bringSubviewToFront:(UIView*)menuInstance];
+
+                                NSLog(@"[WizardBypass] ✓✓✓ Menu added to window!");
+                            } else {
+                                NSLog(@"[WizardBypass] Failed to create menu instance");
+                            }
+                        } else {
+                            NSLog(@"[WizardBypass] Wksahfnasj doesn't respond to initWithFrame:");
                         }
+                    } else {
+                        NSLog(@"[WizardBypass] No key window found for menu");
                     }
                 } else {
                     NSLog(@"[WizardBypass] Wksahfnasj class not found, searching for menu classes...");
