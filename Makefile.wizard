@@ -1,0 +1,23 @@
+ARCHS = arm64
+TARGET = iphone:clang:latest:14.0
+
+include $(THEOS)/makefiles/common.mk
+
+# Build WizardBypass as a standalone library WITHOUT CydiaSubstrate
+LIBRARY_NAME = WizardBypass
+
+WizardBypass_FILES = WizardBypass.x
+WizardBypass_CFLAGS = -fobjc-arc -fno-objc-arc-exceptions
+WizardBypass_LDFLAGS = -lobjc -framework Foundation -framework UIKit
+WizardBypass_INSTALL_PATH = /Library/MobileSubstrate/DynamicLibraries
+
+# CRITICAL: Do NOT link against CydiaSubstrate
+# We're using raw Objective-C runtime instead
+WizardBypass_LIBRARIES =
+
+include $(THEOS_MAKE_PATH)/library.mk
+
+# Post-build: Verify no CydiaSubstrate dependency
+after-stage::
+	@echo "Checking for CydiaSubstrate dependency..."
+	@otool -L $(THEOS_STAGING_DIR)/Library/MobileSubstrate/DynamicLibraries/WizardBypass.dylib | grep -i substrate && echo "ERROR: CydiaSubstrate dependency found!" || echo "✓ No CydiaSubstrate dependency"

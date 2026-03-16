@@ -50,13 +50,23 @@ jobs:
         name: ExtendedGuidelines-deb
         path: packages/*.deb
 
-    - name: Build Wizard bypass tweak
+    - name: Build Wizard bypass tweak (NO SUBSTRATE)
       run: |
         export THEOS=$HOME/theos
         cd ${{ github.workspace }}
         rm -rf .theos
-        make -f Makefile.bypass clean
-        make -f Makefile.bypass package FINALPACKAGE=1
+        make -f Makefile.wizard clean
+        make -f Makefile.wizard
+
+    - name: Verify no CydiaSubstrate dependency
+      run: |
+        cd ${{ github.workspace }}
+        otool -L .theos/obj/WizardBypass.dylib
+        if otool -L .theos/obj/WizardBypass.dylib | grep -i "CydiaSubstrate"; then
+          echo "ERROR: CydiaSubstrate dependency found!"
+          exit 1
+        fi
+        echo "✓ No CydiaSubstrate dependency - build successful!"
 
     - name: Upload Wizard bypass dylib
       uses: actions/upload-artifact@v4
