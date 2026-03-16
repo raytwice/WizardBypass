@@ -162,9 +162,13 @@ static void hook_scl_alert_view(void) {
         if (method) {
             NSLog(@"[WizardBypass] ✓✓✓ Hooking CRITICAL method: %s", critical_methods[i]);
 
+            // Copy method name for block capture
+            const char* method_name = critical_methods[i];
+            char* name_copy = strdup(method_name);
+
             IMP new_imp = imp_implementationWithBlock(^(id self) {
                 NSLog(@"[WizardBypass] ========================================");
-                NSLog(@"[WizardBypass] ✓✓✓ BLOCKED CRITICAL: %s ✓✓✓", critical_methods[i]);
+                NSLog(@"[WizardBypass] ✓✓✓ BLOCKED CRITICAL: %s ✓✓✓", name_copy);
                 NSLog(@"[WizardBypass] ========================================");
                 // Do nothing - popup blocked
             });
@@ -189,9 +193,12 @@ static void hook_scl_alert_view(void) {
         if (strcasestr(name, "show")) {
             NSLog(@"[WizardBypass] Hooking method: %s", name);
 
+            // Copy name for block capture
+            char* name_copy = strdup(name);
+
             // Replace with blocking implementation
             IMP new_imp = imp_implementationWithBlock(^(id self) {
-                NSLog(@"[WizardBypass] ✓✓✓ BLOCKED SCLAlertView::%s ✓✓✓", name);
+                NSLog(@"[WizardBypass] ✓✓✓ BLOCKED SCLAlertView::%s ✓✓✓", name_copy);
                 // Do nothing - popup blocked
             });
 
@@ -287,9 +294,12 @@ static void hook_scl_alert_view_show_builder(void) {
 
         NSLog(@"[WizardBypass] Hooking builder method: %s", name);
 
+        // Copy name for block capture
+        char* name_copy = strdup(name);
+
         // Replace ALL methods with blocking implementation
         IMP new_imp = imp_implementationWithBlock(^id(id self) {
-            NSLog(@"[WizardBypass] ✓✓✓ BLOCKED SCLAlertViewShowBuilder::%s ✓✓✓", name);
+            NSLog(@"[WizardBypass] ✓✓✓ BLOCKED SCLAlertViewShowBuilder::%s ✓✓✓", name_copy);
             // Return self for chaining, but don't actually show anything
             return self;
         });
