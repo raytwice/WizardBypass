@@ -678,9 +678,20 @@ static void delayed_hook(void) {
                 if (iconView) {
                     NSLog(@"[WizardBypass] ✓✓✓ Created Wizard icon view: %@", iconView);
 
+                    // Force set the frame (it was set to 0,0,0,0 by init)
+                    [iconView setFrame:frame];
+                    [iconView setHidden:NO];
+                    [iconView setAlpha:1.0];
+                    [iconView setUserInteractionEnabled:YES];
+
+                    NSLog(@"[WizardBypass] Set frame to: %@", NSStringFromCGRect(frame));
+
                     // Add to window
                     [keyWindow addSubview:iconView];
+                    [keyWindow bringSubviewToFront:iconView];
+
                     NSLog(@"[WizardBypass] ✓✓✓ Added Wizard icon to window!");
+                    NSLog(@"[WizardBypass] Final frame: %@", NSStringFromCGRect([iconView frame]));
                 } else {
                     NSLog(@"[WizardBypass] Failed to create icon view");
                 }
