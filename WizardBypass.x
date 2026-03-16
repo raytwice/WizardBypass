@@ -6,6 +6,7 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
+#import <QuartzCore/QuartzCore.h>
 
 // ============================================================================
 // PHASE 1: DYLD HIDING - Hide our dylib from detection
@@ -686,12 +687,75 @@ static void delayed_hook(void) {
 
                     NSLog(@"[WizardBypass] Set frame to: %@", NSStringFromCGRect(frame));
 
+                    // CRITICAL: Manually populate the _Vmasfisahf UIImageView ivar
+                    // This is what initWithFrame:type: doesn't do without valid auth
+                    NSLog(@"[WizardBypass] Forcing icon image population...");
+
+                    // Get the _Vmasfisahf ivar (UIImageView)
+                    Ivar imageViewIvar = class_getInstanceVariable(pajdsakdfj_class, "_Vmasfisahf");
+                    if (imageViewIvar) {
+                        NSLog(@"[WizardBypass] Found _Vmasfisahf ivar");
+
+                        // Get current value
+                        UIImageView* existingImageView = object_getIvar(iconView, imageViewIvar);
+                        NSLog(@"[WizardBypass] Current _Vmasfisahf: %@", existingImageView);
+
+                        if (!existingImageView) {
+                            // Create a UIImageView with a colored circle as placeholder
+                            UIImageView* imageView = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, 60, 60)];
+
+                            // Create a simple colored circle image
+                            UIGraphicsBeginImageContextWithOptions(CGSizeMake(60, 60), NO, 0.0);
+                            CGContextRef ctx = UIGraphicsGetCurrentContext();
+
+                            // Draw a purple circle (Wizard's color)
+                            CGContextSetFillColorWithColor(ctx, [UIColor colorWithRed:0.5 green:0.0 blue:0.8 alpha:1.0].CGColor);
+                            CGContextFillEllipseInRect(ctx, CGRectMake(5, 5, 50, 50));
+
+                            // Draw a white "W" in the center
+                            CGContextSetFillColorWithColor(ctx, [UIColor whiteColor].CGColor);
+                            NSDictionary* attrs = @{
+                                NSFontAttributeName: [UIFont boldSystemFontOfSize:30],
+                                NSForegroundColorAttributeName: [UIColor whiteColor]
+                            };
+                            [@"W" drawInRect:CGRectMake(15, 10, 30, 40) withAttributes:attrs];
+
+                            UIImage* iconImage = UIGraphicsGetImageFromCurrentImageContext();
+                            UIGraphicsEndImageContext();
+
+                            imageView.image = iconImage;
+                            imageView.contentMode = UIViewContentModeScaleAspectFit;
+
+                            // Set the ivar
+                            object_setIvar(iconView, imageViewIvar, imageView);
+                            NSLog(@"[WizardBypass] ✓ Created and set _Vmasfisahf UIImageView");
+
+                            // Add as subview
+                            [iconView addSubview:imageView];
+                            NSLog(@"[WizardBypass] ✓ Added imageView as subview");
+                        } else {
+                            NSLog(@"[WizardBypass] _Vmasfisahf already exists, ensuring it's visible");
+                            existingImageView.hidden = NO;
+                            existingImageView.alpha = 1.0;
+                        }
+                    } else {
+                        NSLog(@"[WizardBypass] WARNING: _Vmasfisahf ivar not found");
+                    }
+
+                    // Set background color to make it visible even without image
+                    [iconView setBackgroundColor:[UIColor colorWithRed:0.5 green:0.0 blue:0.8 alpha:0.8]];
+                    [(UIView*)iconView setClipsToBounds:NO];
+
+                    // Make it round
+                    ((UIView*)iconView).layer.cornerRadius = 30;
+
                     // Add to window
                     [keyWindow addSubview:iconView];
                     [keyWindow bringSubviewToFront:iconView];
 
                     NSLog(@"[WizardBypass] ✓✓✓ Added Wizard icon to window!");
                     NSLog(@"[WizardBypass] Final frame: %@", NSStringFromCGRect([iconView frame]));
+                    NSLog(@"[WizardBypass] Subviews: %@", [(UIView*)iconView subviews]);
                 } else {
                     NSLog(@"[WizardBypass] Failed to create icon view");
                 }
