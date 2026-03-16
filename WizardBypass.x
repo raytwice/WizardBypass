@@ -79,7 +79,7 @@ static void force_authentication(void) {
         if (cls) {
             NSLog(@"[WizardBypass] Found auth class: %s", auth_classes[i]);
 
-            // Hook all methods that might set authentication state
+            // Hook all methods that might return authentication state
             unsigned int method_count;
             Method* methods = class_copyMethodList(cls, &method_count);
 
@@ -87,14 +87,51 @@ static void force_authentication(void) {
                 SEL selector = method_getName(methods[j]);
                 const char* name = sel_getName(selector);
 
-                // Look for setters that might control auth
-                if (strstr(name, "set") || strstr(name, "auth") || strstr(name, "valid")) {
-                    NSLog(@"[WizardBypass]   Found potential auth method: %s", name);
+                // Hook methods that might check auth state (return YES/TRUE)
+                if (strstr(name, "is") || strstr(name, "has") || strstr(name, "can") ||
+                    strstr(name, "should") || strstr(name, "valid") || strstr(name, "auth") ||
+                    strstr(name, "check") || strstr(name, "verify")) {
+
+                    NSLog(@"[WizardBypass]   Hooking auth check method: %s -> return YES", name);
+
+                    // Replace with implementation that always returns YES/TRUE
+                    IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
+                        return YES;
+                    });
+                    method_setImplementation(methods[j], new_imp);
                 }
             }
 
             free(methods);
         }
+    }
+
+    // Also try to find and hook common Wizard authentication methods
+    Class wizard_class = objc_getClass("Wizard");
+    if (wizard_class) {
+        NSLog(@"[WizardBypass] Found Wizard class, hooking auth methods...");
+
+        unsigned int method_count;
+        Method* methods = class_copyMethodList(wizard_class, &method_count);
+
+        for (unsigned int j = 0; j < method_count; j++) {
+            SEL selector = method_getName(methods[j]);
+            const char* name = sel_getName(selector);
+
+            // Hook any method that looks like an auth check
+            if (strstr(name, "is") || strstr(name, "has") || strstr(name, "valid") ||
+                strstr(name, "auth") || strstr(name, "check") || strstr(name, "license")) {
+
+                NSLog(@"[WizardBypass]   Hooking Wizard method: %s -> return YES", name);
+
+                IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
+                    return YES;
+                });
+                method_setImplementation(methods[j], new_imp);
+            }
+        }
+
+        free(methods);
     }
 }
 
