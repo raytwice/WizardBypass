@@ -148,6 +148,33 @@ static void hook_scl_alert_view(void) {
 
     NSLog(@"[WizardBypass] Found SCLAlertView class, hooking ALL methods...");
 
+    // CRITICAL: Hook the main entry points first
+    const char* critical_methods[] = {
+        "showAlertView:",
+        "showAlertView:onViewController:",
+        NULL
+    };
+
+    for (int i = 0; critical_methods[i] != NULL; i++) {
+        SEL selector = sel_registerName(critical_methods[i]);
+        Method method = class_getInstanceMethod(cls, selector);
+
+        if (method) {
+            NSLog(@"[WizardBypass] ✓✓✓ Hooking CRITICAL method: %s", critical_methods[i]);
+
+            IMP new_imp = imp_implementationWithBlock(^(id self) {
+                NSLog(@"[WizardBypass] ========================================");
+                NSLog(@"[WizardBypass] ✓✓✓ BLOCKED CRITICAL: %s ✓✓✓", critical_methods[i]);
+                NSLog(@"[WizardBypass] ========================================");
+                // Do nothing - popup blocked
+            });
+
+            method_setImplementation(method, new_imp);
+        } else {
+            NSLog(@"[WizardBypass] WARNING: Method not found: %s", critical_methods[i]);
+        }
+    }
+
     // Get ALL instance methods
     unsigned int method_count;
     Method* methods = class_copyMethodList(cls, &method_count);
@@ -231,6 +258,47 @@ static void hook_ui_alert_controller(void) {
         method_setImplementation(method, new_imp);
         NSLog(@"[WizardBypass] UIAlertController hook installed");
     }
+}
+
+// ============================================================================
+// PHASE 4B2: HOOK SCLAlertViewShowBuilder - The builder pattern
+// ============================================================================
+
+static void hook_scl_alert_view_show_builder(void) {
+    NSLog(@"[WizardBypass] Hooking SCLAlertViewShowBuilder...");
+
+    Class builder_class = objc_getClass("SCLAlertViewShowBuilder");
+    if (!builder_class) {
+        NSLog(@"[WizardBypass] WARNING: SCLAlertViewShowBuilder not found");
+        return;
+    }
+
+    NSLog(@"[WizardBypass] Found SCLAlertViewShowBuilder, hooking all methods...");
+
+    // Get ALL instance methods
+    unsigned int method_count;
+    Method* methods = class_copyMethodList(builder_class, &method_count);
+
+    NSLog(@"[WizardBypass] Found %u methods in SCLAlertViewShowBuilder", method_count);
+
+    for (unsigned int i = 0; i < method_count; i++) {
+        SEL selector = method_getName(methods[i]);
+        const char* name = sel_getName(selector);
+
+        NSLog(@"[WizardBypass] Hooking builder method: %s", name);
+
+        // Replace ALL methods with blocking implementation
+        IMP new_imp = imp_implementationWithBlock(^id(id self) {
+            NSLog(@"[WizardBypass] ✓✓✓ BLOCKED SCLAlertViewShowBuilder::%s ✓✓✓", name);
+            // Return self for chaining, but don't actually show anything
+            return self;
+        });
+
+        method_setImplementation(methods[i], new_imp);
+    }
+
+    free(methods);
+    NSLog(@"[WizardBypass] SCLAlertViewShowBuilder hooking complete");
 }
 
 // ============================================================================
@@ -356,6 +424,10 @@ static void delayed_hook(void) {
     NSLog(@"[WizardBypass] Re-hooking SCLAlertView...");
     hook_scl_alert_view();
 
+    // Hook SCLAlertViewShowBuilder (builder pattern)
+    NSLog(@"[WizardBypass] Hooking SCLAlertViewShowBuilder...");
+    hook_scl_alert_view_show_builder();
+
     // Hook UIAlertController
     hook_ui_alert_controller();
 
@@ -388,6 +460,10 @@ static void wizard_bypass_init(void) {
     // Phase 2: Hook popup display (SCLAlertView)
     NSLog(@"[WizardBypass] Phase 2: Hooking SCLAlertView...");
     hook_scl_alert_view();
+
+    // Phase 2b: Hook SCLAlertViewShowBuilder
+    NSLog(@"[WizardBypass] Phase 2b: Hooking SCLAlertViewShowBuilder...");
+    hook_scl_alert_view_show_builder();
 
     // Phase 3: Hook UIAlertController
     NSLog(@"[WizardBypass] Phase 3: Hooking UIAlertController...");
