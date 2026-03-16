@@ -61,9 +61,11 @@ const char* hooked_dyld_get_image_name(uint32_t index) {
 // ============================================================================
 
 static void force_authentication(void) {
-    NSLog(@"[WizardBypass] Forcing authentication flags...");
+    NSLog(@"[WizardBypass] ========================================");
+    NSLog(@"[WizardBypass] FORCING AUTHENTICATION - HOOK ALL METHODS");
+    NSLog(@"[WizardBypass] ========================================");
 
-    // Try to find and patch authentication-related classes
+    // Hook ALL methods in obfuscated auth classes
     const char* auth_classes[] = {
         "ABVJSMGADJS",
         "AJFADSHFSAJXN",
@@ -79,60 +81,78 @@ static void force_authentication(void) {
         if (cls) {
             NSLog(@"[WizardBypass] Found auth class: %s", auth_classes[i]);
 
-            // Hook all methods that might return authentication state
             unsigned int method_count;
             Method* methods = class_copyMethodList(cls, &method_count);
 
+            NSLog(@"[WizardBypass]   Total methods in %s: %u", auth_classes[i], method_count);
+
+            // Hook EVERY method in this class
             for (unsigned int j = 0; j < method_count; j++) {
                 SEL selector = method_getName(methods[j]);
                 const char* name = sel_getName(selector);
+                char* type_encoding = method_copyReturnType(methods[j]);
 
-                // Hook methods that might check auth state (return YES/TRUE)
-                if (strstr(name, "is") || strstr(name, "has") || strstr(name, "can") ||
-                    strstr(name, "should") || strstr(name, "valid") || strstr(name, "auth") ||
-                    strstr(name, "check") || strstr(name, "verify")) {
+                // Skip setters - we only want to hook getters/checkers
+                if (strncmp(name, "set", 3) == 0 && name[3] >= 'A' && name[3] <= 'Z') {
+                    free(type_encoding);
+                    continue;
+                }
 
-                    NSLog(@"[WizardBypass]   Hooking auth check method: %s -> return YES", name);
-
-                    // Replace with implementation that always returns YES/TRUE
+                // Determine return type and hook appropriately
+                if (type_encoding[0] == 'c' || type_encoding[0] == 'B') {
+                    // BOOL return type - return YES
+                    NSLog(@"[WizardBypass]   Hooking BOOL method: %s -> YES", name);
                     IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
                         return YES;
                     });
                     method_setImplementation(methods[j], new_imp);
                 }
+                else if (type_encoding[0] == '@') {
+                    // Object return type - return @YES or self
+                    NSLog(@"[WizardBypass]   Hooking Object method: %s -> @YES", name);
+                    IMP new_imp = imp_implementationWithBlock(^id(id self) {
+                        return @YES;
+                    });
+                    method_setImplementation(methods[j], new_imp);
+                }
+                else if (type_encoding[0] == 'i' || type_encoding[0] == 'q' ||
+                         type_encoding[0] == 'I' || type_encoding[0] == 'Q') {
+                    // Integer return type - return 1
+                    NSLog(@"[WizardBypass]   Hooking Integer method: %s -> 1", name);
+                    IMP new_imp = imp_implementationWithBlock(^NSInteger(id self) {
+                        return 1;
+                    });
+                    method_setImplementation(methods[j], new_imp);
+                }
+                else if (type_encoding[0] == 'f' || type_encoding[0] == 'd') {
+                    // Float/Double return type - return 1.0
+                    NSLog(@"[WizardBypass]   Hooking Float method: %s -> 1.0", name);
+                    IMP new_imp = imp_implementationWithBlock(^double(id self) {
+                        return 1.0;
+                    });
+                    method_setImplementation(methods[j], new_imp);
+                }
+                else if (type_encoding[0] == 'v') {
+                    // Void return type - just log, don't hook
+                    NSLog(@"[WizardBypass]   Skipping void method: %s", name);
+                }
+                else {
+                    NSLog(@"[WizardBypass]   Unknown type '%c' for method: %s", type_encoding[0], name);
+                }
+
+                free(type_encoding);
             }
 
             free(methods);
+            NSLog(@"[WizardBypass] Finished hooking class: %s", auth_classes[i]);
+        } else {
+            NSLog(@"[WizardBypass] WARNING: Auth class not found: %s", auth_classes[i]);
         }
     }
 
-    // Also try to find and hook common Wizard authentication methods
-    Class wizard_class = objc_getClass("Wizard");
-    if (wizard_class) {
-        NSLog(@"[WizardBypass] Found Wizard class, hooking auth methods...");
-
-        unsigned int method_count;
-        Method* methods = class_copyMethodList(wizard_class, &method_count);
-
-        for (unsigned int j = 0; j < method_count; j++) {
-            SEL selector = method_getName(methods[j]);
-            const char* name = sel_getName(selector);
-
-            // Hook any method that looks like an auth check
-            if (strstr(name, "is") || strstr(name, "has") || strstr(name, "valid") ||
-                strstr(name, "auth") || strstr(name, "check") || strstr(name, "license")) {
-
-                NSLog(@"[WizardBypass]   Hooking Wizard method: %s -> return YES", name);
-
-                IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
-                    return YES;
-                });
-                method_setImplementation(methods[j], new_imp);
-            }
-        }
-
-        free(methods);
-    }
+    NSLog(@"[WizardBypass] ========================================");
+    NSLog(@"[WizardBypass] AUTH HOOKING COMPLETE");
+    NSLog(@"[WizardBypass] ========================================");
 }
 
 // ============================================================================
