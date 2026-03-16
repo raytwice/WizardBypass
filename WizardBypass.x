@@ -1,5 +1,5 @@
-// Wizard Authentication Bypass - Minimal Test Version
-// Simple hooks only to test if dylib injection works
+// Wizard Authentication Bypass - Safe Test Version
+// Hooks with crash prevention
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -10,17 +10,35 @@
 - (void)showTitle:(NSString *)title subTitle:(NSString *)subTitle style:(NSInteger)style closeButtonTitle:(NSString *)closeButtonTitle duration:(NSTimeInterval)duration;
 @end
 
-// Simple popup blocking
+// Hook SCLAlertView but call original to prevent crash
 %hook SCLAlertView
 
 - (void)showCustom:(UIImage *)image color:(UIColor *)color title:(NSString *)title subTitle:(NSString *)subTitle closeButtonTitle:(NSString *)closeButtonTitle duration:(NSTimeInterval)duration {
-    NSLog(@"[WizardBypass] Blocked SCLAlertView showCustom: %@", title);
-    return;
+    NSLog(@"[WizardBypass] SCLAlertView showCustom: %@ - %@", title, subTitle);
+
+    // Check if this is the auth popup
+    if ([title containsString:@"Wizard"] || [subTitle containsString:@"key"] || [subTitle containsString:@"auth"]) {
+        NSLog(@"[WizardBypass] Detected auth popup - BLOCKING");
+        return; // Block auth popup
+    }
+
+    // Allow other popups
+    NSLog(@"[WizardBypass] Allowing non-auth popup");
+    %orig;
 }
 
 - (void)showTitle:(NSString *)title subTitle:(NSString *)subTitle style:(NSInteger)style closeButtonTitle:(NSString *)closeButtonTitle duration:(NSTimeInterval)duration {
-    NSLog(@"[WizardBypass] Blocked SCLAlertView showTitle: %@", title);
-    return;
+    NSLog(@"[WizardBypass] SCLAlertView showTitle: %@ - %@", title, subTitle);
+
+    // Check if this is the auth popup
+    if ([title containsString:@"Wizard"] || [subTitle containsString:@"key"] || [subTitle containsString:@"auth"]) {
+        NSLog(@"[WizardBypass] Detected auth popup - BLOCKING");
+        return; // Block auth popup
+    }
+
+    // Allow other popups
+    NSLog(@"[WizardBypass] Allowing non-auth popup");
+    %orig;
 }
 
 %end
@@ -28,6 +46,7 @@
 // Constructor
 %ctor {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] Minimal Test Version Loaded");
+    NSLog(@"[WizardBypass] Safe Test Version Loaded");
+    NSLog(@"[WizardBypass] Will only block auth popups");
     NSLog(@"[WizardBypass] ========================================");
 }
