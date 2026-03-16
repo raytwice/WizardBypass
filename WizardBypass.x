@@ -140,7 +140,7 @@ static void force_authentication(void) {
 // ============================================================================
 
 static void hook_user_defaults(void) {
-    NSLog(@"[WizardBypass] Hooking NSUserDefaults to fake license key...");
+    NSLog(@"[WizardBypass] Hooking NSUserDefaults to monitor license keys...");
 
     Class defaults_class = objc_getClass("NSUserDefaults");
     if (!defaults_class) {
@@ -148,7 +148,7 @@ static void hook_user_defaults(void) {
         return;
     }
 
-    // Hook objectForKey: to return fake license data
+    // Hook objectForKey: - ONLY LOG, don't modify yet
     SEL selector1 = @selector(objectForKey:);
     Method method1 = class_getInstanceMethod(defaults_class, selector1);
     if (method1) {
@@ -157,24 +157,23 @@ static void hook_user_defaults(void) {
             typedef id (*OrigFunc)(NSUserDefaults*, SEL, NSString*);
             id result = ((OrigFunc)original_imp)(self, selector1, key);
 
+            // Log ALL keys to see what Wizard is checking
             if ([key containsString:@"wizard"] || [key containsString:@"Wizard"] ||
                 [key containsString:@"license"] || [key containsString:@"key"] ||
-                [key containsString:@"auth"] || [key containsString:@"valid"]) {
-                NSLog(@"[WizardBypass] NSUserDefaults objectForKey: %@ -> %@", key, result);
-
-                if (!result) {
-                    NSLog(@"[WizardBypass] *** FAKING LICENSE KEY for: %@", key);
-                    return @"VALID_LICENSE_KEY_12345";
-                }
+                [key containsString:@"auth"] || [key containsString:@"valid"] ||
+                [key containsString:@"token"] || [key containsString:@"premium"]) {
+                NSLog(@"[WizardBypass] objectForKey: '%@' -> %@ (type: %@)",
+                      key, result, [result class]);
             }
 
+            // Don't modify - just return original
             return result;
         });
         method_setImplementation(method1, new_imp);
-        NSLog(@"[WizardBypass] NSUserDefaults objectForKey: hook installed");
+        NSLog(@"[WizardBypass] NSUserDefaults objectForKey: monitor installed");
     }
 
-    // Hook boolForKey: to return YES for validation checks
+    // Hook boolForKey: - ONLY LOG
     SEL selector2 = @selector(boolForKey:);
     Method method2 = class_getInstanceMethod(defaults_class, selector2);
     if (method2) {
@@ -185,23 +184,18 @@ static void hook_user_defaults(void) {
 
             if ([key containsString:@"wizard"] || [key containsString:@"Wizard"] ||
                 [key containsString:@"license"] || [key containsString:@"valid"] ||
-                [key containsString:@"auth"] || [key containsString:@"enable"]) {
-                NSLog(@"[WizardBypass] NSUserDefaults boolForKey: %@ -> %d", key, result);
-
-                if ([key containsString:@"valid"] || [key containsString:@"auth"] ||
-                    [key containsString:@"enable"] || [key containsString:@"active"]) {
-                    NSLog(@"[WizardBypass] *** FORCING YES for: %@", key);
-                    return YES;
-                }
+                [key containsString:@"auth"] || [key containsString:@"enable"] ||
+                [key containsString:@"premium"] || [key containsString:@"active"]) {
+                NSLog(@"[WizardBypass] boolForKey: '%@' -> %d", key, result);
             }
 
             return result;
         });
         method_setImplementation(method2, new_imp);
-        NSLog(@"[WizardBypass] NSUserDefaults boolForKey: hook installed");
+        NSLog(@"[WizardBypass] NSUserDefaults boolForKey: monitor installed");
     }
 
-    // Hook stringForKey: to return fake license strings
+    // Hook stringForKey: - ONLY LOG
     SEL selector3 = @selector(stringForKey:);
     Method method3 = class_getInstanceMethod(defaults_class, selector3);
     if (method3) {
@@ -211,19 +205,35 @@ static void hook_user_defaults(void) {
             NSString* result = ((OrigFunc)original_imp)(self, selector3, key);
 
             if ([key containsString:@"wizard"] || [key containsString:@"Wizard"] ||
-                [key containsString:@"license"] || [key containsString:@"key"]) {
-                NSLog(@"[WizardBypass] NSUserDefaults stringForKey: %@ -> %@", key, result);
-
-                if (!result || [result length] == 0) {
-                    NSLog(@"[WizardBypass] *** FAKING LICENSE STRING for: %@", key);
-                    return @"VALID_LICENSE_KEY_12345";
-                }
+                [key containsString:@"license"] || [key containsString:@"key"] ||
+                [key containsString:@"auth"] || [key containsString:@"token"]) {
+                NSLog(@"[WizardBypass] stringForKey: '%@' -> '%@'", key, result);
             }
 
             return result;
         });
         method_setImplementation(method3, new_imp);
-        NSLog(@"[WizardBypass] NSUserDefaults stringForKey: hook installed");
+        NSLog(@"[WizardBypass] NSUserDefaults stringForKey: monitor installed");
+    }
+
+    // Hook dictionaryForKey: - might be storing license as dictionary
+    SEL selector4 = @selector(dictionaryForKey:);
+    Method method4 = class_getInstanceMethod(defaults_class, selector4);
+    if (method4) {
+        IMP original_imp = method_getImplementation(method4);
+        IMP new_imp = imp_implementationWithBlock(^NSDictionary*(NSUserDefaults* self, NSString* key) {
+            typedef NSDictionary* (*OrigFunc)(NSUserDefaults*, SEL, NSString*);
+            NSDictionary* result = ((OrigFunc)original_imp)(self, selector4, key);
+
+            if ([key containsString:@"wizard"] || [key containsString:@"Wizard"] ||
+                [key containsString:@"license"] || [key containsString:@"auth"]) {
+                NSLog(@"[WizardBypass] dictionaryForKey: '%@' -> %@", key, result);
+            }
+
+            return result;
+        });
+        method_setImplementation(method4, new_imp);
+        NSLog(@"[WizardBypass] NSUserDefaults dictionaryForKey: monitor installed");
     }
 }
 
