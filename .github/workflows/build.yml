@@ -1,4 +1,4 @@
-name: Build Extended Guidelines Tweak
+name: Build WizardBypass (No Substrate)
 
 on:
   push:
@@ -30,25 +30,6 @@ jobs:
         curl -LO https://github.com/theos/sdks/archive/master.zip
         unzip master.zip
         mv sdks-master/iPhoneOS*.sdk sdks/
-
-    - name: Build tweak
-      run: |
-        export THEOS=$HOME/theos
-        cd ${{ github.workspace }}
-        make clean
-        make package
-
-    - name: Upload dylib artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ExtendedGuidelines-dylib
-        path: .theos/obj/debug/ExtendedGuidelines.dylib
-
-    - name: Upload deb package
-      uses: actions/upload-artifact@v4
-      with:
-        name: ExtendedGuidelines-deb
-        path: packages/*.deb
 
     - name: Build Wizard bypass tweak (NO SUBSTRATE)
       run: |

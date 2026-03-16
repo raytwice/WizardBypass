@@ -11,7 +11,6 @@
 // PHASE 1: DYLD HIDING - Hide our dylib from detection
 // ============================================================================
 
-static const char* original_dyld_get_image_name(uint32_t image_index);
 static uint32_t (*original_dyld_image_count)(void) = NULL;
 static const char* (*original_dyld_get_image_name_ptr)(uint32_t) = NULL;
 
