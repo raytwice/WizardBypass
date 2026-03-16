@@ -7,7 +7,7 @@ TWEAK_NAME = WizardBypass
 
 WizardBypass_FILES = WizardBypass.x
 WizardBypass_CFLAGS = -fobjc-arc
-WizardBypass_FRAMEWORKS = UIKit Foundation CoreFoundation
-WizardBypass_LIBRARIES = substrate
+WizardBypass_FRAMEWORKS = UIKit Foundation
+WizardBypass_LDFLAGS = -Wl,-undefined,dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
