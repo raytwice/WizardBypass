@@ -641,13 +641,19 @@ static void delayed_hook(void) {
     if (pajdsakdfj_class) {
         NSLog(@"[WizardBypass] Found Pajdsakdfj class, creating instance...");
 
-        // Get the main window
-        UIWindow* keyWindow = [[UIApplication sharedApplication] keyWindow];
-        if (!keyWindow) {
-            NSArray* windows = [[UIApplication sharedApplication] windows];
-            if ([windows count] > 0) {
-                keyWindow = [windows objectAtIndex:0];
+        // Get the main window (iOS 13+ compatible)
+        UIWindow* keyWindow = nil;
+        NSArray* windows = [[UIApplication sharedApplication] windows];
+        for (UIWindow* window in windows) {
+            if (window.isKeyWindow) {
+                keyWindow = window;
+                break;
             }
+        }
+
+        // Fallback to first window
+        if (!keyWindow && [windows count] > 0) {
+            keyWindow = [windows objectAtIndex:0];
         }
 
         if (keyWindow) {
