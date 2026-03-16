@@ -62,4 +62,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: WizardBypass-dylib
-        path: .theos/obj/debug/WizardBypass.dylib
+        path: .theos/obj/WizardBypass.dylib
