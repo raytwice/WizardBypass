@@ -37,10 +37,15 @@ jobs:
         cd ${{ github.workspace }}
         rm -rf .theos
         make -f Makefile.wizard clean
-        make -f Makefile.wizard
-        # Find and copy the dylib to a known location
-        find .theos -name "WizardBypass.dylib" -exec cp {} ./WizardBypass.dylib \;
-        ls -la WizardBypass.dylib
+        make -f Makefile.wizard FINALPACKAGE=1
+        # Find the actual dylib (not dSYM)
+        find .theos -name "*.dylib" -type f ! -path "*.dSYM/*"
+        # Copy the real dylib
+        cp .theos/obj/debug/arm64/WizardBypass.dylib ./WizardBypass.dylib || \
+        cp .theos/obj/WizardBypass.dylib ./WizardBypass.dylib || \
+        find .theos -name "WizardBypass.dylib" -type f ! -path "*.dSYM/*" -exec cp {} ./WizardBypass.dylib \;
+        ls -lh WizardBypass.dylib
+        file WizardBypass.dylib
 
     - name: Verify no CydiaSubstrate dependency
       run: |
