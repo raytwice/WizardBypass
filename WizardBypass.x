@@ -631,6 +631,72 @@ static void delayed_hook(void) {
     hook_user_defaults();
 
     NSLog(@"[WizardBypass] Delayed hook complete - all hooks refreshed");
+
+    // FORCE CREATE WIZARD UI - Manually instantiate the floating icon
+    NSLog(@"[WizardBypass] ========================================");
+    NSLog(@"[WizardBypass] FORCE CREATING WIZARD UI");
+    NSLog(@"[WizardBypass] ========================================");
+
+    Class pajdsakdfj_class = objc_getClass("Pajdsakdfj");
+    if (pajdsakdfj_class) {
+        NSLog(@"[WizardBypass] Found Pajdsakdfj class, creating instance...");
+
+        // Get the main window
+        UIWindow* keyWindow = [[UIApplication sharedApplication] keyWindow];
+        if (!keyWindow) {
+            NSArray* windows = [[UIApplication sharedApplication] windows];
+            if ([windows count] > 0) {
+                keyWindow = [windows objectAtIndex:0];
+            }
+        }
+
+        if (keyWindow) {
+            NSLog(@"[WizardBypass] Got key window: %@", keyWindow);
+
+            // Create frame for floating icon (top-right corner)
+            CGRect frame = CGRectMake(keyWindow.bounds.size.width - 80, 100, 60, 60);
+
+            // Try to call initWithFrame:type:
+            SEL initSelector = NSSelectorFromString(@"initWithFrame:type:");
+            if ([pajdsakdfj_class instancesRespondToSelector:initSelector]) {
+                NSLog(@"[WizardBypass] Calling initWithFrame:type:");
+
+                // Allocate instance
+                id instance = [[pajdsakdfj_class alloc] init];
+
+                // Call initWithFrame:type: with type = 0
+                typedef id (*InitFunc)(id, SEL, CGRect, NSInteger);
+                InitFunc initFunc = (InitFunc)[pajdsakdfj_class instanceMethodForSelector:initSelector];
+                id iconView = initFunc(instance, initSelector, frame, 0);
+
+                if (iconView) {
+                    NSLog(@"[WizardBypass] ✓✓✓ Created Wizard icon view: %@", iconView);
+
+                    // Add to window
+                    [keyWindow addSubview:iconView];
+                    NSLog(@"[WizardBypass] ✓✓✓ Added Wizard icon to window!");
+                } else {
+                    NSLog(@"[WizardBypass] Failed to create icon view");
+                }
+            } else {
+                NSLog(@"[WizardBypass] initWithFrame:type: not found, trying initWithFrame:");
+
+                SEL initFrameSelector = NSSelectorFromString(@"initWithFrame:");
+                if ([pajdsakdfj_class instancesRespondToSelector:initFrameSelector]) {
+                    id iconView = [[pajdsakdfj_class alloc] initWithFrame:frame];
+                    if (iconView) {
+                        NSLog(@"[WizardBypass] ✓✓✓ Created Wizard icon view: %@", iconView);
+                        [keyWindow addSubview:iconView];
+                        NSLog(@"[WizardBypass] ✓✓✓ Added Wizard icon to window!");
+                    }
+                }
+            }
+        } else {
+            NSLog(@"[WizardBypass] ERROR: No key window found");
+        }
+    } else {
+        NSLog(@"[WizardBypass] ERROR: Pajdsakdfj class not found");
+    }
 }
 
 // ============================================================================
