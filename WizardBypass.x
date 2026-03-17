@@ -619,11 +619,16 @@ static void hook_idle_timeout_kill(void) {
                 BOOL isWizard = (targetImage && strstr(targetImage, "Wizard.framework"));
 
                 if (isWizard) {
-                    NSLog(@"[WizardBypass] *** BLOCKED NSTimer from Wizard: %.1fs target=%s sel=%s repeats=%d ***",
+                    NSLog(@"[WizardBypass] Wizard NSTimer: %.1fs target=%s sel=%s repeats=%d",
                           interval, targetClass, selName, repeats);
-                    // Return a valid but dummy timer (not scheduled on any run loop)
-                    NSTimer *dummy = [NSTimer timerWithTimeInterval:999999 target:[NSNull null] selector:@selector(description) userInfo:nil repeats:NO];
-                    return dummy;
+                    // Only block timers ≥5s (likely idle/timeout kills)
+                    // Short timers (0-4s) are legit — e.g. PADSGFNDSAHJ icon setup
+                    if (interval >= 5.0) {
+                        NSLog(@"[WizardBypass] *** BLOCKED (>=5s idle kill) ***");
+                        NSTimer *dummy = [NSTimer timerWithTimeInterval:999999 target:[NSNull null] selector:@selector(description) userInfo:nil repeats:NO];
+                        return dummy;
+                    }
+                    NSLog(@"[WizardBypass] ALLOWED (short interval, likely legit)");
                 }
 
                 // Log other interesting timers
@@ -648,10 +653,14 @@ static void hook_idle_timeout_kill(void) {
                 BOOL isWizard = (targetImage && strstr(targetImage, "Wizard.framework"));
 
                 if (isWizard) {
-                    NSLog(@"[WizardBypass] *** BLOCKED timerWithInterval from Wizard: %.1fs sel=%s ***",
+                    NSLog(@"[WizardBypass] Wizard timerWith: %.1fs sel=%s",
                           interval, sel_getName(selector));
-                    NSTimer *dummy = [NSTimer timerWithTimeInterval:999999 target:[NSNull null] selector:@selector(description) userInfo:nil repeats:NO];
-                    return dummy;
+                    if (interval >= 5.0) {
+                        NSLog(@"[WizardBypass] *** BLOCKED (>=5s idle kill) ***");
+                        NSTimer *dummy = [NSTimer timerWithTimeInterval:999999 target:[NSNull null] selector:@selector(description) userInfo:nil repeats:NO];
+                        return dummy;
+                    }
+                    NSLog(@"[WizardBypass] ALLOWED (short interval)");
                 }
 
                 typedef NSTimer* (*OrigFunc)(Class, SEL, NSTimeInterval, id, SEL, id, BOOL);
@@ -674,10 +683,13 @@ static void hook_idle_timeout_kill(void) {
                 const char* targetImage = class_getImageName([self class]);
                 BOOL isWizard = (targetImage && strstr(targetImage, "Wizard.framework"));
 
-                if (isWizard && delay >= 5.0) {
-                    NSLog(@"[WizardBypass] *** BLOCKED performSelector:afterDelay from Wizard: %s delay=%.1fs ***",
+                if (isWizard) {
+                    NSLog(@"[WizardBypass] Wizard performSelector:%s afterDelay:%.1fs",
                           sel_getName(aSelector), delay);
-                    return;
+                    if (delay >= 3.0) {
+                        NSLog(@"[WizardBypass] *** BLOCKED (>=3s, likely timeout kill) ***");
+                        return;
+                    }
                 }
 
                 typedef void (*OrigFunc)(id, SEL, SEL, id, NSTimeInterval);
@@ -688,10 +700,38 @@ static void hook_idle_timeout_kill(void) {
         }
     }
 
-    // 3. Log exit() address (can't hook C functions without fishhook, but timer blocks should suffice)
-    void *exitHandle = dlsym(RTLD_DEFAULT, "exit");
-    if (exitHandle) {
-        NSLog(@"[WizardBypass] exit() at %p (relying on timer blocks to prevent idle kills)", exitHandle);
+    // 3. Hook NSObject cancelPreviousPerformRequests — prevent Wizard from canceling and rescheduling
+    //    (This is informational, logging only)
+    NSLog(@"[WizardBypass] exit() located (timer blocks should prevent idle kills)");
+
+    // 4. Hook dispatch_after indirectly by hooking SCLAlertView's hideView method
+    //    and hideAnimationType — the popup's internal dismiss triggers Wizard's timeout
+    Class sclClass = objc_getClass("SCLAlertView");
+    if (sclClass) {
+        // Hook hideView to prevent auto-dismiss triggering timeout
+        SEL hideViewSel = NSSelectorFromString(@"hideView");
+        Method hideViewMethod = class_getInstanceMethod(sclClass, hideViewSel);
+        if (hideViewMethod) {
+            IMP origHide = method_getImplementation(hideViewMethod);
+            IMP newHide = imp_implementationWithBlock(^(id self) {
+                NSLog(@"[WizardBypass] *** SCLAlertView::hideView called — BLOCKING (prevents timeout dismiss) ***");
+                // Don't call original — prevents the dismiss-triggered auth timeout
+            });
+            method_setImplementation(hideViewMethod, newHide);
+            NSLog(@"[WizardBypass] SCLAlertView::hideView hooked (blocked)");
+        }
+
+        // Also hook dismissViewControllerAnimated:completion:
+        SEL dismissSel = @selector(dismissViewControllerAnimated:completion:);
+        Method dismissMethod = class_getInstanceMethod(sclClass, dismissSel);
+        if (dismissMethod) {
+            IMP newDismiss = imp_implementationWithBlock(^(id self, BOOL animated, void(^completion)(void)) {
+                NSLog(@"[WizardBypass] *** SCLAlertView::dismissVC called — BLOCKING ***");
+                // Don't dismiss, don't trigger completion
+            });
+            method_setImplementation(dismissMethod, newDismiss);
+            NSLog(@"[WizardBypass] SCLAlertView::dismissVC hooked (blocked)");
+        }
     }
 
     NSLog(@"[WizardBypass] Idle/timeout kill hooks complete");
@@ -756,27 +796,45 @@ static void delayed_hook(void) {
             IMP originalDraw = method_getImplementation(drawMethod);
             unsigned char *impBytes = (unsigned char *)originalDraw;
             NSLog(@"[WizardBypass] === ORIGINAL drawInMTKView: IMP @ %p ===", originalDraw);
-            NSLog(@"[WizardBypass] === DUMPING 512 BYTES FOR ANTI-TAMPER ANALYSIS ===");
-            for (int chunk = 0; chunk < 16; chunk++) {
+            NSLog(@"[WizardBypass] === DUMPING 1024 BYTES FOR ANTI-TAMPER ANALYSIS ===");
+            for (int chunk = 0; chunk < 32; chunk++) {
                 NSMutableString *hexLine = [NSMutableString string];
                 for (int i = 0; i < 32; i++) {
                     [hexLine appendFormat:@"%02x ", impBytes[chunk * 32 + i]];
                 }
                 NSLog(@"[WizardBypass] +%03x: %@", chunk * 32, hexLine);
             }
-            // Also look for 0xDEAD pattern specifically
-            for (int i = 0; i < 508; i += 4) {
+            // Scan for anti-tamper patterns in first 1024 bytes
+            for (int i = 0; i < 1020; i += 4) {
                 uint32_t instr = *(uint32_t *)(impBytes + i);
-                // Check for MOV with 0xDEAD immediate
-                if ((instr & 0xFFE0001F) == 0xD2800000) {
+                // MOVZ Xn, #imm16 — check all MOVZ for 0xDEAD anywhere
+                if ((instr & 0xFF800000) == 0xD2800000) {
                     uint32_t imm16 = (instr >> 5) & 0xFFFF;
-                    if (imm16 == 0xDEAD || imm16 == 0xDEAD) {
-                        NSLog(@"[WizardBypass] !!! FOUND 0xDEAD MOV at offset +%03x: %08x !!!", i, instr);
+                    if (imm16 == 0xDEAD) {
+                        NSLog(@"[WizardBypass] !!! FOUND MOVZ #0xDEAD at +%03x: %08x !!!", i, instr);
                     }
                 }
-                // Check for BR (unconditional branch to register) = 0xD61F0000 + Rn
+                // MOVK Xn, #imm16 — 0xDEAD could be loaded via MOVK
+                if ((instr & 0xFF800000) == 0xF2800000) {
+                    uint32_t imm16 = (instr >> 5) & 0xFFFF;
+                    if (imm16 == 0xDEAD) {
+                        NSLog(@"[WizardBypass] !!! FOUND MOVK #0xDEAD at +%03x: %08x !!!", i, instr);
+                    }
+                }
+                // MOV Wn, #imm16 (32-bit MOVZ) — 0x52800000
+                if ((instr & 0xFF800000) == 0x52800000) {
+                    uint32_t imm16 = (instr >> 5) & 0xFFFF;
+                    if (imm16 == 0xDEAD) {
+                        NSLog(@"[WizardBypass] !!! FOUND MOV Wn, #0xDEAD at +%03x: %08x !!!", i, instr);
+                    }
+                }
+                // BR Xn (unconditional branch to register)
                 if ((instr & 0xFFFFFC1F) == 0xD61F0000) {
-                    NSLog(@"[WizardBypass] !!! FOUND BR Xn at offset +%03x: %08x !!!", i, instr);
+                    NSLog(@"[WizardBypass] !!! FOUND BR Xn at +%03x: %08x !!!", i, instr);
+                }
+                // BLR Xn (branch with link to register)
+                if ((instr & 0xFFFFFC1F) == 0xD63F0000) {
+                    NSLog(@"[WizardBypass] !!! FOUND BLR Xn at +%03x: %08x !!!", i, instr);
                 }
             }
 
