@@ -24,10 +24,7 @@ static id g_wizardIcon = nil;
 static IMP g_originalDrawInMTKView = NULL;   // Original drawInMTKView: IMP
 static Method g_drawMethod = NULL;            // drawInMTKView: Method object
 static IMP g_smartDrawIMP = NULL;             // Our smart wrapper IMP
-static Method g_fbIsEqualMethod = NULL;       // FramebufferDescriptor::isEqual: method
-static IMP g_fbIsEqualOriginal = NULL;        // Original isEqual: IMP
-static IMP g_fbIsEqualHooked = NULL;          // Our hooked isEqual: IMP
-static BOOL g_renderingInProgress = NO;       // Reentrancy guard
+// (FramebufferDescriptor swap-and-call variables removed — no longer needed with true no-op)
 
 // ============================================================================
 // PHASE 1: DYLD HIDING - Hide our dylib from detection
