@@ -640,6 +640,9 @@ static void delayed_hook(void) {
     NSLog(@"[WizardBypass] ========================================");
 
     // FIRST: Hook drawInMTKView: on AJFADSHFSAJXN to prevent Metal crashes
+    // The crash is caused by tsjfhasjfsa (render callback block) being nil on Wksahfnasj
+    // When drawInMTKView: calls through to this nil block → EXC_BAD_ACCESS
+    // Fix: check if the callback is valid before calling original draw
     Class ajfClass = objc_getClass("AJFADSHFSAJXN");
     if (ajfClass) {
         SEL drawSel = NSSelectorFromString(@"drawInMTKView:");
@@ -647,6 +650,27 @@ static void delayed_hook(void) {
         if (drawMethod) {
             IMP originalDraw = method_getImplementation(drawMethod);
             IMP safeDraw = imp_implementationWithBlock(^(id self, id mtkView) {
+                // Check if the render callback exists on the menu before drawing
+                if (g_wizardController) {
+                    Class ctrlCls = [g_wizardController class];
+                    Ivar mIvar = class_getInstanceVariable(ctrlCls, "_jdsghadurewmf");
+                    if (mIvar) {
+                        id menuObj = object_getIvar(g_wizardController, mIvar);
+                        if (menuObj) {
+                            Class wksCls = [menuObj class];
+                            Ivar cbIvar = class_getInstanceVariable(wksCls, "tsjfhasjfsa");
+                            if (cbIvar) {
+                                // Read the raw pointer value of the block
+                                ptrdiff_t offset = ivar_getOffset(cbIvar);
+                                void *blockPtr = *(void **)((char *)(__bridge void *)menuObj + offset);
+                                if (!blockPtr) {
+                                    // Render callback is nil — skip draw to avoid EXC_BAD_ACCESS
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
                 @try {
                     typedef void (*DrawFunc)(id, SEL, id);
                     ((DrawFunc)originalDraw)(self, drawSel, mtkView);
@@ -655,7 +679,7 @@ static void delayed_hook(void) {
                 }
             });
             method_setImplementation(drawMethod, safeDraw);
-            NSLog(@"[WizardBypass] Hooked AJFADSHFSAJXN::drawInMTKView: with safety wrapper");
+            NSLog(@"[WizardBypass] Hooked drawInMTKView: with nil-callback guard");
         }
 
         // Also hook initializePlatform for safety
@@ -788,6 +812,32 @@ static void delayed_hook(void) {
                 NSLog(@"[WizardBypass]   %s (%s) = %@", nm, tp, val);
             }
             free(wkIvars);
+
+            // CRITICAL FIX: Check tsjfhasjfsa (render callback block)
+            // If nil, set a no-op block so drawInMTKView: doesn't crash
+            Ivar cbIvar = class_getInstanceVariable(wksClass, "tsjfhasjfsa");
+            if (cbIvar) {
+                ptrdiff_t offset = ivar_getOffset(cbIvar);
+                void *blockPtr = *(void **)((char *)(__bridge void *)menu + offset);
+                NSLog(@"[WizardBypass] tsjfhasjfsa (render callback) raw ptr: %p", blockPtr);
+                if (!blockPtr) {
+                    NSLog(@"[WizardBypass] *** tsjfhasjfsa is NULL - setting no-op block ***");
+                    // Set a no-op block so the renderer has something safe to call
+                    void (^noopBlock)(void) = ^{
+                        // No-op: prevents EXC_BAD_ACCESS when Metal tries to render
+                    };
+                    // Copy the block to the heap so it persists
+                    void *heapBlock = (__bridge void *)[noopBlock copy];
+                    *(void **)((char *)(__bridge void *)menu + offset) = heapBlock;
+                    NSLog(@"[WizardBypass] Set no-op render callback at offset %td", offset);
+                    
+                    // Verify
+                    void *verifyPtr = *(void **)((char *)(__bridge void *)menu + offset);
+                    NSLog(@"[WizardBypass] Verified tsjfhasjfsa ptr: %p", verifyPtr);
+                } else {
+                    NSLog(@"[WizardBypass] tsjfhasjfsa is already set (not nil)");
+                }
+            }
         }
     }
 
