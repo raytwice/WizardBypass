@@ -868,60 +868,13 @@ static void delayed_hook(void) {
                 }
             }
 
-            // Save original drawInMTKView: IMP and Method for swap-and-call
+            // DO NOT hook drawInMTKView here! The anti-tamper saves IMPs during
+            // initializePlatform. If we swizzle before init, it saves our hook IMP,
+            // then render check sees original≠saved → 0xDEAD.
+            // drawInMTKView hook is installed AFTER initializePlatform in its wrapper.
             g_originalDrawInMTKView = originalDraw;
             g_drawMethod = drawMethod;
-            NSLog(@"[WizardBypass] Saved original drawInMTKView: IMP @ %p, Method @ %p", g_originalDrawInMTKView, g_drawMethod);
-
-            // FULL SWAP-AND-CALL v3:
-            // The anti-tamper inside drawInMTKView checks method_getImplementation()
-            // on its OWN method. If it sees our swizzled IMP, it jumps to 0xDEAD.
-            // Fix: TEMPORARILY restore the original IMP on the Method object itself,
-            // call the original, then re-install our hook.
-            static int drawCallCount = 0;
-            IMP smartDraw = imp_implementationWithBlock(^(id self, id mtkView) {
-                if (!g_originalDrawInMTKView || !g_drawMethod) return;
-
-                // STEP 1: Restore original IMP on the Method object
-                // so method_getImplementation(drawInMTKView:) returns the original
-                method_setImplementation(g_drawMethod, g_originalDrawInMTKView);
-
-                // STEP 2: Also restore FramebufferDescriptor::isEqual: original
-                if (g_fbIsEqualMethod && g_fbIsEqualOriginal) {
-                    method_setImplementation(g_fbIsEqualMethod, g_fbIsEqualOriginal);
-                }
-
-                // STEP 3: Set rendering flag for any other hooks
-                g_renderingInProgress = YES;
-
-                // STEP 4: Call the ORIGINAL drawInMTKView:
-                // Now the runtime looks completely unmodified
-                typedef void (*DrawFunc)(id, SEL, id);
-                ((DrawFunc)g_originalDrawInMTKView)(self, @selector(drawInMTKView:), mtkView);
-
-                // STEP 5: Restore our hooks
-                g_renderingInProgress = NO;
-
-                // Re-install our smart wrapper on drawInMTKView:
-                if (g_smartDrawIMP) {
-                    method_setImplementation(g_drawMethod, g_smartDrawIMP);
-                }
-
-                // Re-install our hooked isEqual:
-                if (g_fbIsEqualMethod && g_fbIsEqualHooked) {
-                    method_setImplementation(g_fbIsEqualMethod, g_fbIsEqualHooked);
-                }
-
-                drawCallCount++;
-                if (drawCallCount <= 5 || drawCallCount % 300 == 0) {
-                    NSLog(@"[WizardBypass] drawInMTKView: FULL SWAP #%d SURVIVED!", drawCallCount);
-                }
-            });
-
-            // Save reference to our smart draw IMP so we can re-install it
-            g_smartDrawIMP = smartDraw;
-            method_setImplementation(drawMethod, smartDraw);
-            NSLog(@"[WizardBypass] drawInMTKView: replaced with FULL-SWAP-AND-CALL v3");
+            NSLog(@"[WizardBypass] Saved original drawInMTKView: IMP @ %p (hook deferred until after initializePlatform)", g_originalDrawInMTKView);
         }
 
         // Also hook initializePlatform for safety
@@ -938,9 +891,52 @@ static void delayed_hook(void) {
                 } @catch (NSException *e) {
                     NSLog(@"[WizardBypass] initializePlatform CAUGHT exception: %@", e);
                 }
+
+                // NOW hook drawInMTKView AFTER initializePlatform has saved its IMPs.
+                // This is critical: the anti-tamper saves expected IMPs during init.
+                // If we hook before init, it saves our hook = mismatch later = 0xDEAD.
+                if (g_drawMethod && g_originalDrawInMTKView && !g_smartDrawIMP) {
+                    NSLog(@"[WizardBypass] POST-INIT: Now installing drawInMTKView swap-and-call hook");
+                    static int drawCallCount = 0;
+                    IMP smartDraw = imp_implementationWithBlock(^(id selfDraw, id mtkView) {
+                        if (!g_originalDrawInMTKView || !g_drawMethod) return;
+
+                        // Restore original IMP on Method so anti-tamper check passes
+                        method_setImplementation(g_drawMethod, g_originalDrawInMTKView);
+
+                        // Also restore FramebufferDescriptor::isEqual:
+                        if (g_fbIsEqualMethod && g_fbIsEqualOriginal) {
+                            method_setImplementation(g_fbIsEqualMethod, g_fbIsEqualOriginal);
+                        }
+
+                        g_renderingInProgress = YES;
+
+                        // Call ORIGINAL drawInMTKView — anti-tamper sees all original IMPs
+                        typedef void (*DrawFunc)(id, SEL, id);
+                        ((DrawFunc)g_originalDrawInMTKView)(selfDraw, @selector(drawInMTKView:), mtkView);
+
+                        g_renderingInProgress = NO;
+
+                        // Re-install our hooks
+                        if (g_smartDrawIMP) {
+                            method_setImplementation(g_drawMethod, g_smartDrawIMP);
+                        }
+                        if (g_fbIsEqualMethod && g_fbIsEqualHooked) {
+                            method_setImplementation(g_fbIsEqualMethod, g_fbIsEqualHooked);
+                        }
+
+                        drawCallCount++;
+                        if (drawCallCount <= 5 || drawCallCount % 300 == 0) {
+                            NSLog(@"[WizardBypass] drawInMTKView: POST-INIT SWAP #%d SURVIVED!", drawCallCount);
+                        }
+                    });
+                    g_smartDrawIMP = smartDraw;
+                    method_setImplementation(g_drawMethod, smartDraw);
+                    NSLog(@"[WizardBypass] drawInMTKView: DEFERRED HOOK INSTALLED (post-initializePlatform)");
+                }
             });
             method_setImplementation(initPlatMethod, safeInitPlat);
-            NSLog(@"[WizardBypass] Hooked AJFADSHFSAJXN::initializePlatform with safety wrapper");
+            NSLog(@"[WizardBypass] Hooked AJFADSHFSAJXN::initializePlatform (drawInMTKView hook deferred)");
         }
     } else {
         NSLog(@"[WizardBypass] WARNING: AJFADSHFSAJXN class not found for safety hooks");
