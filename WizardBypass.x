@@ -8,6 +8,8 @@
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #import <QuartzCore/QuartzCore.h>
+#import <mach/mach.h>
+#import <libkern/OSCacheControl.h>
 
 // ============================================================================
 // GLOBAL: Wizard controller reference accessible from didTapIconView
@@ -807,19 +809,64 @@ static void delayed_hook(void) {
         Method drawMethod = class_getInstanceMethod(ajfClass, drawSel);
         if (drawMethod) {
             IMP originalDraw = method_getImplementation(drawMethod);
-            NSLog(@"[WizardBypass] === drawInMTKView: IMP @ %p (NOT HOOKED - let anti-tamper pass) ===", originalDraw);
-            // DO NOT hook drawInMTKView - the anti-tamper detects method swizzling
-            // on Wizard classes and corrupts renderer state → PC=0 crash.
-            // Let it run natively with its original IMP untouched.
+            NSLog(@"[WizardBypass] === drawInMTKView: IMP @ %p ===", originalDraw);
+
+            // ================================================================
+            // MEMORY PATCH: Skip anti-tamper integrity check in drawInMTKView
+            // ================================================================
+            // The anti-tamper at drawInMTKView+0x28 is:
+            //   CBNZ W9, +0x9C  (0x350004e9)
+            // If flag is set: skip check. If not: run XOR integrity check.
+            // The XOR check detects our dylib and zeroes all regs → PC=0 crash.
+            // FIX: Patch CBNZ to unconditional B → always skip the check.
+            //   B +0x27  (0x14000027) — jumps to offset +0xC4 (past check)
+            // ================================================================
+
+            unsigned char *impPtr = (unsigned char *)originalDraw;
+            uint32_t *patchAddr = (uint32_t *)(impPtr + 0x28);
+            uint32_t currentInstr = *patchAddr;
+
+            NSLog(@"[WizardBypass] drawInMTKView+0x28 current: 0x%08x (expected CBNZ: 0x350004e9)", currentInstr);
+
+            if (currentInstr == 0x350004e9) {
+                // Found the CBNZ — patch it to unconditional B
+                uint32_t patchInstr = 0x14000027; // B +0x9C (same offset as CBNZ target)
+
+                // Make page writable
+                vm_address_t pageAddr = (vm_address_t)patchAddr & ~(vm_page_size - 1);
+                kern_return_t kr = vm_protect(mach_task_self(), pageAddr, vm_page_size,
+                                              false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+
+                if (kr == KERN_SUCCESS) {
+                    NSLog(@"[WizardBypass] vm_protect RWX success");
+
+                    // Write the patch
+                    *patchAddr = patchInstr;
+                    NSLog(@"[WizardBypass] PATCHED drawInMTKView+0x28: 0x350004e9 → 0x14000027 (CBNZ → B)");
+
+                    // Flush instruction cache
+                    sys_icache_invalidate((void *)patchAddr, 4);
+                    NSLog(@"[WizardBypass] Instruction cache flushed");
+
+                    // Restore page to RX (no write)
+                    vm_protect(mach_task_self(), pageAddr, vm_page_size,
+                               false, VM_PROT_READ | VM_PROT_EXECUTE);
+                    NSLog(@"[WizardBypass] vm_protect restored to RX");
+                    NSLog(@"[WizardBypass] >>> ANTI-TAMPER PATCHED — drawInMTKView integrity check DISABLED <<<");
+                } else {
+                    NSLog(@"[WizardBypass] vm_protect FAILED: %d — cannot patch anti-tamper", kr);
+                }
+            } else {
+                NSLog(@"[WizardBypass] WARNING: Expected CBNZ (0x350004e9) at +0x28 but got 0x%08x", currentInstr);
+                NSLog(@"[WizardBypass] Anti-tamper layout may have changed — cannot patch");
+            }
         }
 
-        // DO NOT hook initializePlatform either - hooking ANY Wizard method
-        // triggers the anti-tamper which silently corrupts state.
-        // Let initializePlatform run natively.
+        // Log initializePlatform (not hooked, runs natively)
         SEL initPlatSel = NSSelectorFromString(@"initializePlatform");
         Method initPlatMethod = class_getInstanceMethod(ajfClass, initPlatSel);
         if (initPlatMethod) {
-            NSLog(@"[WizardBypass] initializePlatform IMP @ %p (NOT HOOKED - anti-tamper safe)", 
+            NSLog(@"[WizardBypass] initializePlatform IMP @ %p (not hooked)",
                   method_getImplementation(initPlatMethod));
         }
     } else {
