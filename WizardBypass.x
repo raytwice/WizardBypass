@@ -18,7 +18,7 @@
 static id g_wizardController = nil;
 static id g_wizardIcon = nil;
 
-// v28: Safe no-op drawInMTKView + hex dump. v27 flag-preset crashed (bad ADRP decode).
+// v29: Custom UIKit menu + full Wizard API dump. No drawInMTKView hook.
 // Only system-level hooks (UIKit, NSUserDefaults, SCLAlertView, dyld) are used.
 
 // ============================================================================
@@ -791,139 +791,71 @@ static void delayed_hook(void) {
     NSLog(@"[WizardBypass] Delayed hook complete - all hooks refreshed");
 
     // ========================================
-    // PHASE 7: HOOK METAL RENDERER FOR SAFETY + SETUP CONTROLLER
-    // IKAFHFDSAJ creates MTKView + Wksahfnasj but the Metal render loop
-    // (drawInMTKView:) can crash if imgui isn't fully ready.
-    // Solution: hook drawInMTKView: with @try/@catch before calling IKAFHFDSAJ
+    // PHASE 7: WIZARD API DUMP + CONTROLLER SETUP
+    // v29: No drawInMTKView hook. Dump ALL Wizard classes for UIKit menu.
     // ========================================
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] PHASE 7: HOOKING METAL + SETTING UP CONTROLLER");
+    NSLog(@"[WizardBypass] PHASE 7: WIZARD API DUMP (v29)");
     NSLog(@"[WizardBypass] ========================================");
 
-    // FIRST: Hook drawInMTKView: on AJFADSHFSAJXN
-    // The ORIGINAL drawInMTKView: contains anti-tamper checks that jump to 0xDEAD
-    // We MUST NOT call the original - replace with complete no-op
-    Class ajfClass = objc_getClass("AJFADSHFSAJXN");
-    if (ajfClass) {
-        SEL drawSel = NSSelectorFromString(@"drawInMTKView:");
-        Method drawMethod = class_getInstanceMethod(ajfClass, drawSel);
-        if (drawMethod) {
-            IMP originalDraw = method_getImplementation(drawMethod);
-            NSLog(@"[WizardBypass] === drawInMTKView: IMP @ %p ===", originalDraw);
+    // Dump ALL classes from Wizard.framework with full method + ivar details
+    unsigned int allClassCount;
+    Class *allClasses = objc_copyClassList(&allClassCount);
+    int wizardClassCount = 0;
+    for (unsigned int ci = 0; ci < allClassCount; ci++) {
+        const char *img = class_getImageName(allClasses[ci]);
+        if (!img || !strstr(img, "Wizard.framework")) continue;
+        wizardClassCount++;
+        const char *cn = class_getName(allClasses[ci]);
+        Class superCls = class_getSuperclass(allClasses[ci]);
+        const char *superName = superCls ? class_getName(superCls) : "nil";
+        NSLog(@"[WizardBypass] === CLASS: %s (super: %s) ===", cn, superName);
 
-            // ================================================================
-            // v28: SAFE NO-OP + HEX DUMP (reverted from v27 flag-preset crash)
-            // ================================================================
-            // v27 crashed because ADRP+ADD decode produced a bad address.
-            // Strategy: dump 128 bytes of the original IMP for manual analysis,
-            // then replace with no-op (proven safe in v18/v24).
-            // ================================================================
-
-            // STEP 1: Hex dump 128 bytes of original IMP for offline analysis
-            unsigned char *impPtr = (unsigned char *)originalDraw;
-            NSLog(@"[WizardBypass] ========================================");
-            NSLog(@"[WizardBypass] DUMPING 128 BYTES OF drawInMTKView: IMP");
-            NSLog(@"[WizardBypass] IMP address: %p", originalDraw);
-            NSLog(@"[WizardBypass] ========================================");
-            for (int row = 0; row < 8; row++) {
-                int off = row * 16;
-                NSLog(@"[WizardBypass] +%03x: %02x %02x %02x %02x  %02x %02x %02x %02x  %02x %02x %02x %02x  %02x %02x %02x %02x",
-                      off,
-                      impPtr[off+0],  impPtr[off+1],  impPtr[off+2],  impPtr[off+3],
-                      impPtr[off+4],  impPtr[off+5],  impPtr[off+6],  impPtr[off+7],
-                      impPtr[off+8],  impPtr[off+9],  impPtr[off+10], impPtr[off+11],
-                      impPtr[off+12], impPtr[off+13], impPtr[off+14], impPtr[off+15]);
-            }
-            // Also dump as 32-bit words for ARM64 instruction decode
-            uint32_t *instrPtr = (uint32_t *)originalDraw;
-            NSLog(@"[WizardBypass] --- ARM64 instructions (32 words) ---");
-            for (int i = 0; i < 32; i++) {
-                uint32_t instr = instrPtr[i];
-                // Basic ARM64 instruction identification
-                const char *hint = "";
-                if ((instr & 0x9F000000) == 0x90000000) hint = " <-- ADRP";
-                else if ((instr & 0x7F800000) == 0x11000000) hint = " <-- ADD imm";
-                else if ((instr & 0xFF000000) == 0x35000000) hint = " <-- CBNZ W";
-                else if ((instr & 0xFF000000) == 0xB5000000) hint = " <-- CBNZ X";
-                else if ((instr & 0xFF000000) == 0x34000000) hint = " <-- CBZ W";
-                else if ((instr & 0xFF000000) == 0xB4000000) hint = " <-- CBZ X";
-                else if ((instr & 0xFFE00000) == 0xD2800000) hint = " <-- MOVZ";
-                else if ((instr & 0xFFE00000) == 0xF2A00000) hint = " <-- MOVK (lsl#16)";
-                else if ((instr & 0xFC000000) == 0x14000000) hint = " <-- B";
-                else if ((instr & 0xFF000010) == 0x54000000) hint = " <-- B.cond";
-                else if ((instr & 0xFFFFFC1F) == 0xD61F0000) hint = " <-- BR";
-                else if ((instr & 0xFFFFFC1F) == 0xD63F0000) hint = " <-- BLR";
-                else if ((instr & 0xFFE0001F) == 0xD65F0000) hint = " <-- RET";
-                else if ((instr & 0x7FC00000) == 0x29000000) hint = " <-- STP";
-                else if ((instr & 0x7FC00000) == 0x29400000) hint = " <-- LDP";
-                else if ((instr & 0x3B000000) == 0x39000000) hint = " <-- LDR/STR imm";
-                NSLog(@"[WizardBypass] [%02d] +0x%03x: 0x%08x%s", i, i*4, instr, hint);
-            }
-            NSLog(@"[WizardBypass] ========================================");
-
-            // STEP 2: Replace with SAFE NO-OP (never calls original)
-            IMP noopDraw = imp_implementationWithBlock(^(id selfDraw, id mtkView) {
-                // Complete no-op — anti-tamper code never executes
-                // Menu will be blank but game won't crash
-            });
-            method_setImplementation(drawMethod, noopDraw);
-            NSLog(@"[WizardBypass] drawInMTKView: replaced with SAFE NO-OP (v28)");
+        // Dump ivars
+        unsigned int ivarCount;
+        Ivar *ivars = class_copyIvarList(allClasses[ci], &ivarCount);
+        NSLog(@"[WizardBypass]   IVARS (%d):", ivarCount);
+        for (unsigned int iv = 0; iv < ivarCount; iv++) {
+            NSLog(@"[WizardBypass]     [%d] %s (%s) offset=%td", iv,
+                  ivar_getName(ivars[iv]), ivar_getTypeEncoding(ivars[iv]),
+                  ivar_getOffset(ivars[iv]));
         }
+        if (ivars) free(ivars);
 
-        // Log initializePlatform (not hooked, runs natively)
-        SEL initPlatSel = NSSelectorFromString(@"initializePlatform");
-        Method initPlatMethod = class_getInstanceMethod(ajfClass, initPlatSel);
-        if (initPlatMethod) {
-            NSLog(@"[WizardBypass] initializePlatform IMP @ %p (not hooked)",
-                  method_getImplementation(initPlatMethod));
-        }
-    } else {
-        NSLog(@"[WizardBypass] WARNING: AJFADSHFSAJXN class not found for safety hooks");
-    }
-
-    // Dump unknown classes for anti-tamper intelligence
-    Class kmsjClass = objc_getClass("Kmsjfaigh");
-    if (kmsjClass) {
-        unsigned int kmMethodCount;
-        Method *kmMethods = class_copyMethodList(kmsjClass, &kmMethodCount);
-        NSLog(@"[WizardBypass] === Kmsjfaigh class: %d methods ===", kmMethodCount);
-        for (unsigned int i = 0; i < kmMethodCount; i++) {
-            SEL sel = method_getName(kmMethods[i]);
-            char *retType = method_copyReturnType(kmMethods[i]);
-            NSLog(@"[WizardBypass]   Kmsjfaigh::%s (ret: %s)", sel_getName(sel), retType);
+        // Dump instance methods
+        unsigned int methodCount;
+        Method *methods = class_copyMethodList(allClasses[ci], &methodCount);
+        NSLog(@"[WizardBypass]   INSTANCE METHODS (%d):", methodCount);
+        for (unsigned int mi = 0; mi < methodCount; mi++) {
+            SEL sel = method_getName(methods[mi]);
+            const char *enc = method_getTypeEncoding(methods[mi]);
+            char *retType = method_copyReturnType(methods[mi]);
+            unsigned int nargs = method_getNumberOfArguments(methods[mi]);
+            NSLog(@"[WizardBypass]     [%d] %s (ret:%s args:%u enc:%s)", mi,
+                  sel_getName(sel), retType, nargs, enc);
             free(retType);
         }
-        free(kmMethods);
-        // Dump ivars too
-        unsigned int kmIvarCount;
-        Ivar *kmIvars = class_copyIvarList(kmsjClass, &kmIvarCount);
-        NSLog(@"[WizardBypass]   Kmsjfaigh ivars: %d", kmIvarCount);
-        for (unsigned int i = 0; i < kmIvarCount; i++) {
-            NSLog(@"[WizardBypass]     %s (%s)", ivar_getName(kmIvars[i]), ivar_getTypeEncoding(kmIvars[i]));
-        }
-        free(kmIvars);
-    }
+        if (methods) free(methods);
 
-    Class mjshClass = objc_getClass("Mjshjgkash");
-    if (mjshClass) {
-        unsigned int mjMethodCount;
-        Method *mjMethods = class_copyMethodList(mjshClass, &mjMethodCount);
-        NSLog(@"[WizardBypass] === Mjshjgkash class: %d methods ===", mjMethodCount);
-        for (unsigned int i = 0; i < mjMethodCount; i++) {
-            SEL sel = method_getName(mjMethods[i]);
-            char *retType = method_copyReturnType(mjMethods[i]);
-            NSLog(@"[WizardBypass]   Mjshjgkash::%s (ret: %s)", sel_getName(sel), retType);
-            free(retType);
+        // Dump class methods
+        Class metaClass = object_getClass((id)allClasses[ci]);
+        unsigned int cMethodCount;
+        Method *cMethods = class_copyMethodList(metaClass, &cMethodCount);
+        if (cMethodCount > 0) {
+            NSLog(@"[WizardBypass]   CLASS METHODS (%d):", cMethodCount);
+            for (unsigned int mi = 0; mi < cMethodCount; mi++) {
+                SEL sel = method_getName(cMethods[mi]);
+                const char *enc = method_getTypeEncoding(cMethods[mi]);
+                char *retType = method_copyReturnType(cMethods[mi]);
+                NSLog(@"[WizardBypass]     [+%d] %s (ret:%s enc:%s)", mi,
+                      sel_getName(sel), retType, enc);
+                free(retType);
+            }
         }
-        free(mjMethods);
-        unsigned int mjIvarCount;
-        Ivar *mjIvars = class_copyIvarList(mjshClass, &mjIvarCount);
-        NSLog(@"[WizardBypass]   Mjshjgkash ivars: %d", mjIvarCount);
-        for (unsigned int i = 0; i < mjIvarCount; i++) {
-            NSLog(@"[WizardBypass]     %s (%s)", ivar_getName(mjIvars[i]), ivar_getTypeEncoding(mjIvars[i]));
-        }
-        free(mjIvars);
+        if (cMethods) free(cMethods);
     }
+    free(allClasses);
+    NSLog(@"[WizardBypass] Total Wizard classes: %d", wizardClassCount);
 
     // Create ABVJSMGADJS controller
     Class abvjsmgadjs_class = objc_getClass("ABVJSMGADJS");
@@ -934,33 +866,28 @@ static void delayed_hook(void) {
     g_wizardController = [[abvjsmgadjs_class alloc] init];
     NSLog(@"[WizardBypass] Created ABVJSMGADJS controller: %@", g_wizardController);
 
-    // IMMEDIATELY invalidate controller timers to prevent idle/timeout kills
+    // Invalidate controller timers
     Ivar timerIvar1 = class_getInstanceVariable(abvjsmgadjs_class, "_qmshnfuas");
     Ivar timerIvar2 = class_getInstanceVariable(abvjsmgadjs_class, "_nvjsafhsa");
     if (timerIvar1) {
         NSTimer *t1 = object_getIvar(g_wizardController, timerIvar1);
-        if (t1) {
-            [t1 invalidate];
-            NSLog(@"[WizardBypass] Invalidated _qmshnfuas timer: %@", t1);
-        }
+        if (t1) [t1 invalidate];
         object_setIvar(g_wizardController, timerIvar1, nil);
-        NSLog(@"[WizardBypass] Set _qmshnfuas = nil");
+        NSLog(@"[WizardBypass] _qmshnfuas timer killed");
     }
     if (timerIvar2) {
         NSTimer *t2 = object_getIvar(g_wizardController, timerIvar2);
-        if (t2) {
-            [t2 invalidate];
-            NSLog(@"[WizardBypass] Invalidated _nvjsafhsa timer: %@", t2);
-        }
+        if (t2) [t2 invalidate];
         object_setIvar(g_wizardController, timerIvar2, nil);
-        NSLog(@"[WizardBypass] Set _nvjsafhsa = nil");
+        NSLog(@"[WizardBypass] _nvjsafhsa timer killed");
     }
 
     // ========================================
-    // PHASE 8: CREATE UI + LET IKAFHFDSAJ BUILD MENU + PAUSE METAL
+    // PHASE 8: CUSTOM UIKit MENU + FLOATING ICON
+    // v29: Build our own menu — no more broken Metal/imgui
     // ========================================
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] PHASE 8: CREATE UI + MENU SETUP");
+    NSLog(@"[WizardBypass] PHASE 8: CUSTOM UIKit MENU (v29)");
     NSLog(@"[WizardBypass] ========================================");
 
     UIWindow* keyWindow = nil;
@@ -974,11 +901,104 @@ static void delayed_hook(void) {
         return;
     }
 
-    // Create our icon
+    CGFloat screenW = keyWindow.bounds.size.width;
+    CGFloat screenH = keyWindow.bounds.size.height;
+
+    // ---- BUILD CUSTOM UIKit MENU ----
+    // Main container: semi-transparent dark overlay
+    CGFloat menuW = screenW * 0.85;
+    CGFloat menuH = screenH * 0.6;
+    CGFloat menuX = (screenW - menuW) / 2.0;
+    CGFloat menuY = (screenH - menuH) / 2.0;
+
+    UIView *menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuX, menuY, menuW, menuH)];
+    menuContainer.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.15 alpha:0.95];
+    menuContainer.layer.cornerRadius = 16;
+    menuContainer.clipsToBounds = YES;
+    menuContainer.hidden = YES;
+    menuContainer.tag = 9999; // Tag for finding it later
+
+    // Title bar
+    UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, menuW, 50)];
+    titleBar.backgroundColor = [UIColor colorWithRed:0.3 green:0.1 blue:0.6 alpha:1.0];
+
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 0, menuW - 32, 50)];
+    titleLabel.text = @"Wizard Menu — v29";
+    titleLabel.textColor = [UIColor whiteColor];
+    titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    [titleBar addSubview:titleLabel];
+    [menuContainer addSubview:titleBar];
+
+    // Subtitle
+    UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 54, menuW - 32, 20)];
+    subtitleLabel.text = @"Feature discovery build — check syslog for API dump";
+    subtitleLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+    subtitleLabel.font = [UIFont systemFontOfSize:12];
+    [menuContainer addSubview:subtitleLabel];
+
+    // ScrollView for feature list
+    UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 80, menuW, menuH - 80)];
+    scrollView.showsVerticalScrollIndicator = YES;
+
+    // Create placeholder feature buttons — we'll populate with real features in v30
+    // For now, list the known Wizard methods as tappable items
+    NSArray *featureNames = @[
+        @"PADSGFNDSAHJ — Icon Setup",
+        @"IKAFHFDSAJ — Full Menu Init",
+        @"ASFGAHJFAHS — Chain Setup",
+        @"MdhsaJFSAJ — Base Setup",
+        @"paDJSAFBSANC — Menu Method 1",
+        @"jsafbSAHCN — Menu Method 2",
+        @"dgshdsfyewrh — Menu Method 3",
+        @"initializePlatform — Metal Init",
+        @"shutdownPlatform — Metal Shutdown",
+        @"handleEvent:view: — Input Forward"
+    ];
+
+    CGFloat buttonY = 8;
+    CGFloat buttonH = 44;
+    CGFloat buttonW = menuW - 32;
+
+    for (NSUInteger fi = 0; fi < featureNames.count; fi++) {
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+        btn.frame = CGRectMake(16, buttonY, buttonW, buttonH);
+        btn.backgroundColor = [UIColor colorWithRed:0.15 green:0.15 blue:0.25 alpha:1.0];
+        btn.layer.cornerRadius = 8;
+        [btn setTitle:featureNames[fi] forState:UIControlStateNormal];
+        [btn setTitleColor:[UIColor colorWithRed:0.7 green:0.8 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
+        btn.titleLabel.font = [UIFont systemFontOfSize:14];
+        btn.titleLabel.adjustsFontSizeToFitWidth = YES;
+        btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+        btn.contentEdgeInsets = UIEdgeInsetsMake(0, 12, 0, 12);
+        btn.tag = 10000 + fi;
+
+        // All buttons just log for now — v30 will wire real features
+        [btn addTarget:nil action:@selector(description) forControlEvents:UIControlEventTouchUpInside];
+
+        [scrollView addSubview:btn];
+        buttonY += buttonH + 8;
+    }
+
+    // Info label at bottom
+    UILabel *infoLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, buttonY + 4, buttonW, 40)];
+    infoLabel.text = @"Check syslog for full Wizard API dump.\nFeatures will be wired in v30.";
+    infoLabel.textColor = [UIColor colorWithWhite:0.4 alpha:1.0];
+    infoLabel.font = [UIFont systemFontOfSize:11];
+    infoLabel.numberOfLines = 2;
+    [scrollView addSubview:infoLabel];
+
+    scrollView.contentSize = CGSizeMake(menuW, buttonY + 52);
+    [menuContainer addSubview:scrollView];
+
+    [keyWindow addSubview:menuContainer];
+    NSLog(@"[WizardBypass] Custom UIKit menu created (hidden, tag=9999)");
+
+    // ---- ALSO: Still call IKAFHFDSAJ to create Wizard internals ----
+    // But immediately pause MTKView and hide the Metal menu
     Class pajdsakdfj_class = objc_getClass("Pajdsakdfj");
     if (!pajdsakdfj_class) { NSLog(@"[WizardBypass] ERROR: Pajdsakdfj not found"); return; }
 
-    CGRect frame = CGRectMake(keyWindow.bounds.size.width - 80, 100, 60, 60);
+    CGRect frame = CGRectMake(screenW - 80, 100, 60, 60);
     SEL initSelector = NSSelectorFromString(@"initWithFrame:type:");
     id iconView = nil;
     if ([pajdsakdfj_class instancesRespondToSelector:initSelector]) {
@@ -989,110 +1009,55 @@ static void delayed_hook(void) {
     if (!iconView) { NSLog(@"[WizardBypass] Failed to create icon"); return; }
     g_wizardIcon = iconView;
 
-    // Wire our icon into controller's first Pajdsakdfj slot
+    // Wire icon into controller
     unsigned int ctrlIvarCount;
     Ivar *ctrlIvars = class_copyIvarList(abvjsmgadjs_class, &ctrlIvarCount);
     for (unsigned int i = 0; i < ctrlIvarCount; i++) {
         const char *type = ivar_getTypeEncoding(ctrlIvars[i]);
         if (type && strstr(type, "Pajdsakdfj")) {
-            NSLog(@"[WizardBypass] Setting ABVJSMGADJS::%s = our icon", ivar_getName(ctrlIvars[i]));
             object_setIvar(g_wizardController, ctrlIvars[i], iconView);
             break;
         }
     }
     free(ctrlIvars);
 
-    // Call PADSGFNDSAHJ (icon setup - creates UIImageViews, safe)
+    // Call PADSGFNDSAHJ (icon setup)
     NSLog(@"[WizardBypass] Calling PADSGFNDSAHJ...");
     ((void (*)(id, SEL))objc_msgSend)(g_wizardController, sel_registerName("PADSGFNDSAHJ"));
 
-    // Call IKAFHFDSAJ (FULL setup - creates MTKView + Wksahfnasj + 4 icons)
-    NSLog(@"[WizardBypass] Calling IKAFHFDSAJ (creates menu)...");
+    // Call IKAFHFDSAJ (creates internal Wizard objects — MTKView, Wksahfnasj, etc.)
+    // We need these objects alive even though we won't render with them
+    NSLog(@"[WizardBypass] Calling IKAFHFDSAJ...");
     ((void (*)(id, SEL))objc_msgSend)(g_wizardController, sel_registerName("IKAFHFDSAJ"));
 
-    // Get the menu that IKAFHFDSAJ created
+    // Immediately pause MTKView permanently and hide the Wizard Metal menu
     Ivar menuIvar = class_getInstanceVariable(abvjsmgadjs_class, "_jdsghadurewmf");
-    id menu = menuIvar ? object_getIvar(g_wizardController, menuIvar) : nil;
-    NSLog(@"[WizardBypass] Menu after IKAFHFDSAJ: %@", menu);
-
-    if (menu) {
-        // CRITICAL: Hide the menu and pause its MTKView to stop render loop crash
-        [(UIView*)menu setHidden:YES];
-        NSLog(@"[WizardBypass] Menu hidden (will show on tap)");
-
-        // Pause the MTKView inside the menu to stop Metal render loop
+    id wizMenu = menuIvar ? object_getIvar(g_wizardController, menuIvar) : nil;
+    if (wizMenu) {
+        [(UIView*)wizMenu setHidden:YES];
         Class wksClass = objc_getClass("Wksahfnasj");
         if (wksClass) {
             Ivar mtkIvar = class_getInstanceVariable(wksClass, "_pPfuasjrasfh");
             if (mtkIvar) {
-                id mtkView = object_getIvar(menu, mtkIvar);
-                NSLog(@"[WizardBypass] MTKView inside menu: %@", mtkView);
+                id mtkView = object_getIvar(wizMenu, mtkIvar);
                 if (mtkView) {
-                    // Pause the MTKView - stops drawInMTKView: calls
-                    SEL pausedSel = NSSelectorFromString(@"setPaused:");
-                    if ([mtkView respondsToSelector:pausedSel]) {
-                        ((void (*)(id, SEL, BOOL))objc_msgSend)(mtkView, pausedSel, YES);
-                        NSLog(@"[WizardBypass] MTKView PAUSED - render loop stopped");
-                    }
-                    // Also disable frame updates
-                    SEL enableSetterSel = NSSelectorFromString(@"setEnableSetNeedsDisplay:");
-                    if ([mtkView respondsToSelector:enableSetterSel]) {
-                        ((void (*)(id, SEL, BOOL))objc_msgSend)(mtkView, enableSetterSel, NO);
-                        NSLog(@"[WizardBypass] MTKView setNeedsDisplay disabled");
-                    }
-                }
-            }
-
-            // Dump Wksahfnasj ivars for diagnostics
-            unsigned int wkIvarCount;
-            Ivar *wkIvars = class_copyIvarList(wksClass, &wkIvarCount);
-            NSLog(@"[WizardBypass] Wksahfnasj has %d ivars:", wkIvarCount);
-            for (unsigned int i = 0; i < wkIvarCount; i++) {
-                const char *nm = ivar_getName(wkIvars[i]);
-                const char *tp = ivar_getTypeEncoding(wkIvars[i]);
-                id val = nil;
-                if (tp && tp[0] == '@') val = object_getIvar(menu, wkIvars[i]);
-                NSLog(@"[WizardBypass]   %s (%s) = %@", nm, tp, val);
-            }
-            free(wkIvars);
-
-            // CRITICAL FIX: Check tsjfhasjfsa (render callback block)
-            // If nil, set a no-op block so drawInMTKView: doesn't crash
-            Ivar cbIvar = class_getInstanceVariable(wksClass, "tsjfhasjfsa");
-            if (cbIvar) {
-                ptrdiff_t offset = ivar_getOffset(cbIvar);
-                void *blockPtr = *(void **)((char *)(__bridge void *)menu + offset);
-                NSLog(@"[WizardBypass] tsjfhasjfsa (render callback) raw ptr: %p", blockPtr);
-                if (!blockPtr) {
-                    NSLog(@"[WizardBypass] *** tsjfhasjfsa is NULL - setting no-op block ***");
-                    // Set a no-op block so the renderer has something safe to call
-                    void (^noopBlock)(void) = ^{
-                        // No-op: prevents EXC_BAD_ACCESS when Metal tries to render
-                    };
-                    // Copy the block to the heap so it persists
-                    void *heapBlock = (__bridge void *)[noopBlock copy];
-                    *(void **)((char *)(__bridge void *)menu + offset) = heapBlock;
-                    NSLog(@"[WizardBypass] Set no-op render callback at offset %td", offset);
-                    
-                    // Verify
-                    void *verifyPtr = *(void **)((char *)(__bridge void *)menu + offset);
-                    NSLog(@"[WizardBypass] Verified tsjfhasjfsa ptr: %p", verifyPtr);
-                } else {
-                    NSLog(@"[WizardBypass] tsjfhasjfsa is already set (not nil)");
+                    ((void (*)(id, SEL, BOOL))objc_msgSend)(mtkView, NSSelectorFromString(@"setPaused:"), YES);
+                    ((void (*)(id, SEL, BOOL))objc_msgSend)(mtkView, NSSelectorFromString(@"setEnableSetNeedsDisplay:"), NO);
+                    NSLog(@"[WizardBypass] MTKView permanently paused");
                 }
             }
         }
+        NSLog(@"[WizardBypass] Wizard Metal menu hidden permanently");
     }
 
-    // Hide ALL framework-created Pajdsakdfj icons (IKAFHFDSAJ created extras)
+    // Hide framework-created Pajdsakdfj icons
     for (UIView *subview in [keyWindow subviews]) {
         if ([subview isKindOfClass:pajdsakdfj_class] && subview != (UIView*)iconView) {
-            NSLog(@"[WizardBypass] Hiding framework Pajdsakdfj: %@", subview);
             subview.hidden = YES;
         }
     }
 
-    // Set up OUR icon appearance
+    // Set up our floating icon
     [iconView setFrame:frame];
     [iconView setHidden:NO];
     [iconView setAlpha:1.0];
@@ -1122,100 +1087,61 @@ static void delayed_hook(void) {
         }
     }
 
-    // ========================================
-    // FULLY REPLACE didTapIconView - toggle menu + unpause MTKView
-    // ========================================
+    // ---- TAP HANDLER: toggle our UIKit menu ----
     SEL tapSelector = NSSelectorFromString(@"didTapIconView");
     Method tapMethod = class_getInstanceMethod(pajdsakdfj_class, tapSelector);
     if (tapMethod) {
         IMP newTap = imp_implementationWithBlock(^(id self) {
-            NSLog(@"[WizardBypass] ========================================");
-            NSLog(@"[WizardBypass] TAP! Toggling menu via g_wizardController");
-            NSLog(@"[WizardBypass] ========================================");
+            NSLog(@"[WizardBypass] TAP! Toggling custom UIKit menu");
 
-            if (!g_wizardController) {
-                NSLog(@"[WizardBypass] ERROR: g_wizardController is nil!");
+            // Find our menu by tag
+            UIWindow* kw = nil;
+            NSArray* wins = [[UIApplication sharedApplication] windows];
+            for (UIWindow* w in wins) {
+                if (w.isKeyWindow) { kw = w; break; }
+            }
+            if (!kw && [wins count] > 0) kw = [wins objectAtIndex:0];
+            if (!kw) return;
+
+            UIView *ourMenu = [kw viewWithTag:9999];
+            if (!ourMenu) {
+                NSLog(@"[WizardBypass] ERROR: Custom menu not found (tag 9999)!");
                 return;
             }
 
-            Class ctrlClass = [g_wizardController class];
-            Ivar mIvar = class_getInstanceVariable(ctrlClass, "_jdsghadurewmf");
-            id menuRef = mIvar ? object_getIvar(g_wizardController, mIvar) : nil;
-            NSLog(@"[WizardBypass] Menu: %@", menuRef);
-
-            if (!menuRef) {
-                NSLog(@"[WizardBypass] Menu is nil, cannot toggle!");
-                return;
-            }
-
-            BOOL isHidden = [(UIView*)menuRef isHidden];
+            BOOL isHidden = ourMenu.hidden;
             NSLog(@"[WizardBypass] Menu isHidden=%d, toggling to %d", isHidden, !isHidden);
 
             if (isHidden) {
-                // SHOW menu — DO NOT unpause MTKView (anti-tamper runs in render loop)
-                [(UIView*)menuRef setHidden:NO];
-                [(UIView*)menuRef setUserInteractionEnabled:YES];
-                [(UIView*)menuRef setAlpha:1.0];
-
-                // Bring to front
-                UIWindow* kw = [(UIView*)menuRef window];
-                if (!kw) {
-                    NSArray* wins = [[UIApplication sharedApplication] windows];
-                    for (UIWindow* w in wins) {
-                        if (w.isKeyWindow) { kw = w; break; }
-                    }
-                    if (!kw && [wins count] > 0) kw = [wins objectAtIndex:0];
-                    if (kw) {
-                        [kw addSubview:menuRef];
-                        NSLog(@"[WizardBypass] Added menu to window");
-                    }
-                }
-                if (kw) [kw bringSubviewToFront:menuRef];
-
-                // NOTE: MTKView stays paused — drawInMTKView: is a no-op anyway
-                // Unpausing would trigger the render loop which we don't need
-                // since drawInMTKView: is replaced with no-op
-                // BUT let's try unpausing now that the anti-tamper code is bypassed:
-                Class wksClass = objc_getClass("Wksahfnasj");
-                Ivar mtkIvar = wksClass ? class_getInstanceVariable(wksClass, "_pPfuasjrasfh") : NULL;
-                if (mtkIvar) {
-                    id mtkView = object_getIvar(menuRef, mtkIvar);
-                    if (mtkView) {
-                        SEL pausedSel = NSSelectorFromString(@"setPaused:");
-                        if ([mtkView respondsToSelector:pausedSel]) {
-                            ((void (*)(id, SEL, BOOL))objc_msgSend)(mtkView, pausedSel, NO);
-                            NSLog(@"[WizardBypass] MTKView UNPAUSED (drawInMTKView is no-op)");
-                        }
-                    }
-                }
-
-                NSLog(@"[WizardBypass] Menu SHOWN!");
+                ourMenu.hidden = NO;
+                ourMenu.alpha = 0.0;
+                [kw bringSubviewToFront:ourMenu];
+                [UIView animateWithDuration:0.25 animations:^{
+                    ourMenu.alpha = 1.0;
+                }];
+                NSLog(@"[WizardBypass] Custom menu SHOWN!");
             } else {
-                // HIDE menu
-                [(UIView*)menuRef setHidden:YES];
-                NSLog(@"[WizardBypass] Menu HIDDEN!");
+                [UIView animateWithDuration:0.2 animations:^{
+                    ourMenu.alpha = 0.0;
+                } completion:^(BOOL finished) {
+                    ourMenu.hidden = YES;
+                }];
+                NSLog(@"[WizardBypass] Custom menu HIDDEN!");
             }
 
-            // Keep our icon on top
+            // Keep icon on top
             if (g_wizardIcon) {
-                UIWindow* kw = [(UIView*)g_wizardIcon window];
-                if (kw) [kw bringSubviewToFront:g_wizardIcon];
+                [kw bringSubviewToFront:(UIView*)g_wizardIcon];
             }
         });
         method_setImplementation(tapMethod, newTap);
-        NSLog(@"[WizardBypass] didTapIconView FULLY REPLACED (toggle + MTKView pause/unpause)");
+        NSLog(@"[WizardBypass] didTapIconView → custom UIKit menu toggle");
     }
 
-    // Add our icon to window (on top)
     [keyWindow addSubview:iconView];
     [keyWindow bringSubviewToFront:iconView];
     NSLog(@"[WizardBypass] Icon added at %@", NSStringFromCGRect(frame));
-
-    // Final state
-    NSLog(@"[WizardBypass] === FINAL STATE ===");
-    NSLog(@"[WizardBypass] g_wizardController: %@", g_wizardController);
-    NSLog(@"[WizardBypass] Menu: %@ (hidden=%d)", menu, menu ? [(UIView*)menu isHidden] : -1);
-    NSLog(@"[WizardBypass] PHASE 8 COMPLETE - TAP ICON TO SHOW MENU");
+    NSLog(@"[WizardBypass] === v29 READY — TAP ICON FOR UIKit MENU ===");
 }
 
 // ============================================================================
