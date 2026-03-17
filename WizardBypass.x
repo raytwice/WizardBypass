@@ -508,7 +508,7 @@ static BOOL caller_is_wizard(void) {
 
 static void hook_crypto_auth(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] PHASE 4F: CRYPTO AUTH BYPASS (v31)");
+    NSLog(@"[WizardBypass] PHASE 4F: CRYPTO AUTH BYPASS (v32)");
     NSLog(@"[WizardBypass] ========================================");
 
     // ---- 1. Hook CCCrypt (CommonCrypto) ----
@@ -556,15 +556,26 @@ static void hook_crypto_auth(void) {
                 typedef BOOL (*OrigFunc)(NSString*, SEL, NSString*);
                 BOOL result = ((OrigFunc)origIsEq)(self, isEqSel, other);
 
-                // Log string comparisons from Wizard
-                if (caller_is_wizard()) {
-                    NSLog(@"[WizardBypass] Wizard NSString isEqualToString: '%@' == '%@' -> %d",
+                // v32: INTERCEPT validation result
+                // When Wizard checks if result == "Key is invalid" and it IS true,
+                // force NO so Wizard thinks validation passed
+                if (result) {
+                    if (([other length] > 5 && [other containsString:@"invalid"]) ||
+                        ([self length] > 5 && [self containsString:@"invalid"])) {
+                        NSLog(@"[WizardBypass] *** INTERCEPTED 'invalid' check: '%@' == '%@' -> FORCING NO ***", self, other);
+                        return NO;
+                    }
+                }
+
+                // Log string comparisons from Wizard (only short strings)
+                if (caller_is_wizard() && [self length] < 100 && [other length] < 100) {
+                    NSLog(@"[WizardBypass] Wizard isEqualToString: '%@' == '%@' -> %d",
                           self, other, result);
                 }
                 return result;
             });
             method_setImplementation(isEqMethod, newIsEq);
-            NSLog(@"[WizardBypass] NSString isEqualToString: hooked (Wizard logging)");
+            NSLog(@"[WizardBypass] NSString isEqualToString: hooked (v32 intercepts 'invalid')");
         }
     }
 
@@ -580,16 +591,18 @@ static void hook_crypto_auth(void) {
                 typedef BOOL (*OrigFunc)(NSData*, SEL, NSData*);
                 BOOL result = ((OrigFunc)origIsEqData)(self, isEqDataSel, other);
 
-                if (caller_is_wizard()) {
-                    NSLog(@"[WizardBypass] Wizard NSData isEqualToData: len=%lu vs len=%lu -> %d (FORCING YES)",
-                          (unsigned long)[self length], (unsigned long)[other length], result);
-                    // FORCE the comparison to return YES â€” this bypasses hash comparison!
+                // v32: Force YES for crypto-sized data (no backtrace check)
+                NSUInteger len1 = [self length];
+                NSUInteger len2 = [other length];
+                if (len1 == len2 && len1 >= 16 && len1 <= 64 && !result) {
+                    NSLog(@"[WizardBypass] *** NSData isEqualToData: len=%lu FORCING YES ***",
+                          (unsigned long)len1);
                     return YES;
                 }
                 return result;
             });
             method_setImplementation(isEqDataMethod, newIsEqData);
-            NSLog(@"[WizardBypass] NSData isEqualToData: hooked â€” Wizard calls FORCED to YES");
+            NSLog(@"[WizardBypass] NSData isEqualToData: hooked (v32 size-filter force YES)");
         }
     }
 
