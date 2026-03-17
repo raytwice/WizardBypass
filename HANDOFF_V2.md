@@ -1,9 +1,10 @@
 ================================================================================
 WIZARD BYPASS PROJECT - HANDOFF DOCUMENT V2
 ================================================================================
-Last Updated: 2026-03-17 01:27 UTC
-Status: Icon visible + tappable, menu created but 0xDEAD anti-tamper crash on render
-Build: commit 97b6ec8 (anti-tamper no-op + diagnostics)
+Last Updated: 2026-03-17 01:50 UTC
+Status: Menu visible + no crash! drawInMTKView no-op confirmed working. Need to
+        find anti-tamper branch to allow real rendering.
+Build: v19 (pending push — 512-byte IMP dump + idle kill)
 
 ================================================================================
 THE PROBLEM
@@ -11,16 +12,25 @@ THE PROBLEM
 
 CURRENT ISSUE:
 --------------
-Menu is successfully created by IKAFHFDSAJ. Tapping the icon unhides Wksahfnasj
-and unpauses its MTKView. However, the original drawInMTKView: on AJFADSHFSAJXN
-contains ANTI-TAMPER checks that detect our method swizzling and deliberately
-crash with PC=0xDEAD. This is NOT a nil-pointer crash.
+Menu shows (hidden→visible) and MTKView unpauses WITHOUT CRASHING!
+The drawInMTKView: no-op kills the anti-tamper 0xDEAD trap completely.
+However, the menu is BLANK because drawInMTKView: does nothing.
+
+NEXT STEP: Dump 512 bytes of the original drawInMTKView: IMP, find the
+anti-tamper branch (MOV X?, #0xDEAD + BR X?), and patch just those bytes
+in a future build so the real imgui rendering works.
+
+SECONDARY ISSUE: Wizard has an idle/timeout mechanism that crashes or exits
+the game if the auth popup is up too long. v19 neutralizes this with:
+  - NSTimer hooks (block all Wizard.framework timers)
+  - performSelector:afterDelay: hooks (block ≥5s delays from Wizard)
+  - Immediate invalidation of ABVJSMGADJS timer ivars
 
 ROOT CAUSE (CONFIRMED VIA RUNTIME v18):
 -----------------------------------------
 1. IKAFHFDSAJ successfully creates: UITextFields, MTKView, Wksahfnasj, 4x Pajdsakdfj
 2. Wksahfnasj ivars after creation:
-     tsjfhasjfsa  (^v)              = 0x283b9ab00  ← render callback (NOT nil!)
+     tsjfhasjfsa  (^v)              = 0x280f57400  ← render callback (NOT nil!)
      _pPfuasjrasfh (@"MTKView")     = <MTKView>    ← Metal view
      _paJFSAUJJFSAC (@"AJFADSHFSAJXN") = <AJFADSHFSAJXN> ← renderer
 3. initializePlatform runs SUCCESS — Metal pipeline is ready
@@ -28,10 +38,10 @@ ROOT CAUSE (CONFIRMED VIA RUNTIME v18):
    detects swizzled methods → jumps to 0xDEAD → crash
 5. @try/@catch CANNOT catch 0xDEAD (it's EXC_BAD_ACCESS, not NSException)
 
-FIX (commit 97b6ec8):
+FIX APPLIED (v18, commit 97b6ec8):
    Replace drawInMTKView: with complete NO-OP — never call original.
    This prevents the anti-tamper code from executing entirely.
-   Menu won't render imgui content, but app survives.
+   Menu survives but renders blank (no imgui frames drawn).
 
 PRIOR ISSUES (SOLVED):
 -----------------------
@@ -53,8 +63,8 @@ IVARS (7 total, ALL objects, ZERO booleans):
   ivar[2]: _naJFSAKFNSMN   (type: @"Pajdsakdfj")    ← Icon position 2
   ivar[3]: _AYtPSMFSKdfj   (type: @"Pajdsakdfj")    ← Icon position 3
   ivar[4]: _AYmpXkdajwND   (type: @"Pajdsakdfj")    ← Icon position 4
-  ivar[5]: _qmshnfuas      (type: @"NSTimer")        ← Timer 1
-  ivar[6]: _nvjsafhsa      (type: @"NSTimer")        ← Timer 2
+  ivar[5]: _qmshnfuas      (type: @"NSTimer")        ← Timer 1 (IDLE KILL?)
+  ivar[6]: _nvjsafhsa      (type: @"NSTimer")        ← Timer 2 (IDLE KILL?)
 
 METHODS (all instance, encoding v16@0:8 = void, no args):
   PADSGFNDSAHJ  — Creates 3 UIImageViews (icon setup). This is the INIT method.
@@ -79,13 +89,27 @@ METHODS: 2 only
   didTapIconView          — tap handler (accesses controller via UNKNOWN mechanism)
   initWithFrame:type:     — creates view with frame + type parameter
 
-CRITICAL: Since Pajdsakdfj has 0 custom ivars, `didTapIconView` MUST access
-the ABVJSMGADJS controller through one of:
-  a) A C/C++ global variable (most likely — Wizard uses C++)
-  b) objc_getAssociatedObject (ObjC runtime)
-  c) A class-level static variable
-  d) The responder chain or UIView superview hierarchy
-  e) A singleton method on ABVJSMGADJS (but no +shared or +instance method found)
+Kmsjfaigh — ICON VIEW (UIView subclass, VARIANT)
+--------------------------------------------------
+IVARS: 2
+  _Vmasfisahf (@"UIImageView")  — the icon image
+  _type (q / long long)           — icon type identifier
+METHODS: 7
+  didTapIconView          — tap handler (same as Pajdsakdfj!)
+  Vmasfisahf / setVmasfisahf:  — image view property
+  type / setType:               — type property
+  initWithFrame:          — standard init
+  .cxx_destruct
+
+Mjshjgkash — DRAG GESTURE HANDLER (UIView subclass)
+-----------------------------------------------------
+IVARS: 2
+  _startLocation ({CGPoint="x"d"y"d})  — drag start point
+  _didMovePoint ({CGPoint="x"d"y"d})   — current drag offset
+METHODS: 8
+  touchesBegan/Moved/Ended/Cancelled   — standard pan gesture
+  startLocation / setStartLocation:     — start point property
+  didMovePoint / setDidMovePoint:       — move point property
 
 Wksahfnasj — METAL-BACKED MENU (UIView subclass)
 --------------------------------------------------
@@ -106,6 +130,7 @@ This is the imgui Metal rendering backend, NOT authentication.
 METHODS:
   initWithView:                           — takes MTKView
   drawInMTKView:                          — MTKViewDelegate render callback
+                                            *** CONTAINS ANTI-TAMPER 0xDEAD ***
   mtkView:drawableSizeWillChange:         — MTKViewDelegate resize
   initializePlatform / shutdownPlatform   — Metal pipeline setup/teardown
   handleEvent:view:                       — input event forwarding
@@ -114,8 +139,6 @@ METHODS:
   loader / setLoader: / delegate / setDelegate:
 
 Other Classes:
-  Kmsjfaigh     — Unknown purpose, no key methods found
-  Mjshjgkash    — Unknown purpose, no key methods found
   MetalContext  — Metal rendering context
   MetalBuffer   — Metal buffer wrapper
   FramebufferDescriptor — Framebuffer config (only BOOL method: isEqual:)
@@ -141,6 +164,20 @@ v17        2128ec5    Diagnostic build: dump ABVJSMGADJS/Pajdsakdfj ivars.
                       - All 4 ABVJSMGADJS methods are void
                       - PADSGFNDSAHJ creates UIImageViews
                       - didTapIconView accesses controller via unknown mechanism
+v18        97b6ec8    drawInMTKView no-op + diagnostics.
+                      ✓ No crash on icon tap!
+                      ✓ Menu toggles visible (hidden→shown)
+                      ✓ MTKView unpauses without crash
+                      ✗ Menu is BLANK (no imgui rendering)
+                      NEW: Kmsjfaigh has 2 ivars (UIImageView + type)
+                      NEW: Mjshjgkash has 2 ivars (startLocation + didMovePoint)
+v19        PENDING    512-byte IMP dump + idle/timeout kill.
+                      Changes:
+                      - Dump 512 bytes of drawInMTKView IMP to find 0xDEAD
+                      - Auto-detect MOV #0xDEAD and BR instructions in dump
+                      - Hook NSTimer to block Wizard framework timers
+                      - Hook performSelector:afterDelay: for Wizard classes
+                      - Invalidate ABVJSMGADJS timer ivars (_qmshnfuas, _nvjsafhsa)
 
 CURRENT STATE:
 ✓ Icon appears on screen (purple W circle, top-right, 60x60px)
@@ -149,47 +186,31 @@ CURRENT STATE:
 ✓ auth-token-type faked to "premium" in NSUserDefaults
 ✓ ABVJSMGADJS created and its 4 methods called (all succeed, no crash)
 ✓ didTapIconView runs without crash
-✗ Menu does not appear — Pajdsakdfj can't find ABVJSMGADJS controller
-✗ ABVJSMGADJS controller → Pajdsakdfj wiring is one-way (controller knows
-  icon, but icon can't find controller due to 0 ivars)
+✓ Menu toggles visible/hidden on tap (NO CRASH!)
+✓ MTKView unpauses without crash (drawInMTKView is no-op)
+✗ Menu is blank — drawInMTKView no-op means no imgui frames render
+✗ Need to find & patch the anti-tamper branch to allow real rendering
 
 ================================================================================
 WHAT NEEDS TO HAPPEN NEXT
 ================================================================================
 
-THE CORE PROBLEM TO SOLVE:
----------------------------
-Find HOW `didTapIconView` accesses ABVJSMGADJS. Since Pajdsakdfj has 0 ivars,
-it must use one of these mechanisms:
+IMMEDIATE (v19 output analysis):
+---------------------------------
+1. Build & deploy v19
+2. Read the 512-byte hex dump from syslog
+3. Find the anti-tamper pattern:
+   - Look for MOV X?, #0xDEAD (should show as !!! FOUND 0xDEAD MOV in logs)
+   - Look for BR X? nearby (should show as !!! FOUND BR Xn in logs)
+   - The conditional branch (B.NE or B.EQ) before the MOV is the check
+4. In v20: patch those specific bytes to NOP, call the original drawInMTKView:
 
-INVESTIGATION PATH 1: Associated Objects
-  - Hook objc_getAssociatedObject to see if didTapIconView uses it
-  - If so, use objc_setAssociatedObject to set our ABVJSMGADJS on the icon
-
-INVESTIGATION PATH 2: C++ Global Variable
-  - The Wizard binary likely has a global ABVJSMGADJS* pointer
-  - Use `nm` or `otool` to find global symbols in the Wizard binary
-  - Or hook didTapIconView at the assembly level to see what it accesses
-
-INVESTIGATION PATH 3: Replace didTapIconView Entirely
-  - Instead of calling the original, write our own implementation
-  - In our implementation, directly call ABVJSMGADJS::PADSGFNDSAHJ on our
-    known controller instance to set up icons, then toggle menu visibility
-
-INVESTIGATION PATH 4: Disassemble didTapIconView
-  - Get the IMP of didTapIconView
-  - Log the first N bytes of machine code
-  - Look for adrp/ldr patterns that load a global variable
-  - This tells us exactly what memory address the controller is stored at
-
-RECOMMENDED APPROACH:
-  Path 3 is fastest: completely replace didTapIconView. We already have a
-  valid ABVJSMGADJS instance. When tapped, we should:
-  1. Create Wksahfnasj via the controller (not direct alloc/init)
-  2. Or toggle visibility of an existing menu
-  3. The challenge: Wksahfnasj needs Metal pipeline setup
-
-  Path 1 is safest: check associated objects first, it's a common pattern.
+FUTURE (v20+):
+--------------
+Once we can identify the anti-tamper branch offset:
+  - Use vm_protect + mach_vm_write to patch the branch to NOP (if kernel allows)
+  - OR use a custom drawInMTKView: that calls original but first patches the check
+  - OR dump enough to reconstruct drawInMTKView: without the anti-tamper branch
 
 ================================================================================
 AUTH FLOW OBSERVED IN SYSLOG
@@ -235,7 +256,7 @@ BUILD & DEPLOY:
 
 KEY FILES:
 ----------
-  WizardBypass.x         — Main tweak code (~950 lines)
+  WizardBypass.x         — Main tweak code (~1200 lines)
   WizardBypass.plist      — Load config (targets pool app bundle)
   .github/workflows/build.yml — CI build config
   HANDOFF_V2.md           — This file
@@ -245,22 +266,25 @@ SYSLOG MESSAGES TO WATCH FOR
 ================================================================================
 
 STARTUP:
-  "PHASE 7: HOOKING ABVJSMGADJS"     → Controller class found
-  "ABVJSMGADJS has 7 ivars"          → Structure dumped
-  "PADSGFNDSAHJ -> retType=v"        → Methods analyzed
-  "PHASE 8: CREATING WIZARD UI"      → UI creation started
-  "Created ABVJSMGADJS controller"   → Controller instantiated
-  "Pajdsakdfj has 0 ivars"           → CRITICAL: no controller ref
-  "CALLED: ABVJSMGADJS::PADSGFNDSAHJ" → Setup methods called
+  "PHASE 7: HOOKING METAL + SETTING UP CONTROLLER"  → Metal hooks installed
+  "DUMPING 512 BYTES FOR ANTI-TAMPER ANALYSIS"       → IMP dump started
+  "+000: fa 67 bb a9..."                              → Hex dump lines
+  "!!! FOUND 0xDEAD MOV at offset ..."               → ANTI-TAMPER FOUND!
+  "!!! FOUND BR Xn at offset ..."                    → Branch to 0xDEAD found!
+  "HOOKING IDLE/TIMEOUT KILL MECHANISMS"              → Timer hooks installed
+  "BLOCKED NSTimer from Wizard..."                    → Timer intercepted
+  "Set _qmshnfuas = nil"                              → Controller timer killed
+  "Set _nvjsafhsa = nil"                              → Controller timer killed
 
 ON TAP:
-  "didTapIconView CALLED"            → Tap detected
-  "Original didTapIconView RETURNED"  → Original ran (no crash)
-  (NO ivar dump because 0 ivars)
+  "TAP! Toggling menu via g_wizardController"        → Tap detected
+  "Menu isHidden=1, toggling to 0"                   → Menu shown
+  "MTKView UNPAUSED (drawInMTKView is no-op)"        → Render loop active (no-op)
+  "Menu SHOWN!"                                       → Success
 
-AUTH (3s after launch):
-  "FAKING auth-token-type -> premium" → NSUserDefaults spoofed
-  "BLOCKED SCLAlertView::showInfo"    → License popup blocked
+AUTH:
+  "FAKING auth-token-type -> premium"                 → NSUserDefaults spoofed
+  "BLOCKED SCLAlertView::showInfo"                    → License popup blocked
 
 ================================================================================
 END OF HANDOFF

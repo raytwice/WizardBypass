@@ -596,6 +596,108 @@ static void hook_ui_window(void) {
 }
 
 // ============================================================================
+// PHASE 4E: IDLE/TIMEOUT KILL — Prevent Wizard from crashing on idle
+// ============================================================================
+
+static void hook_idle_timeout_kill(void) {
+    NSLog(@"[WizardBypass] ========================================");
+    NSLog(@"[WizardBypass] HOOKING IDLE/TIMEOUT KILL MECHANISMS");
+    NSLog(@"[WizardBypass] ========================================");
+
+    // 1. Hook NSTimer scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:
+    //    Block timers targeting Wizard framework classes
+    Class timerClass = objc_getClass("NSTimer");
+    if (timerClass) {
+        SEL timerSel = @selector(scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:);
+        Method timerMethod = class_getClassMethod(timerClass, timerSel);
+        if (timerMethod) {
+            IMP origTimer = method_getImplementation(timerMethod);
+            IMP newTimer = imp_implementationWithBlock(^NSTimer*(Class self, NSTimeInterval interval, id target, SEL selector, id userInfo, BOOL repeats) {
+                const char* targetClass = object_getClassName(target);
+                const char* selName = sel_getName(selector);
+                const char* targetImage = class_getImageName([target class]);
+                BOOL isWizard = (targetImage && strstr(targetImage, "Wizard.framework"));
+
+                if (isWizard) {
+                    NSLog(@"[WizardBypass] *** BLOCKED NSTimer from Wizard: %.1fs target=%s sel=%s repeats=%d ***",
+                          interval, targetClass, selName, repeats);
+                    // Return a valid but dummy timer (not scheduled on any run loop)
+                    NSTimer *dummy = [NSTimer timerWithTimeInterval:999999 target:[NSNull null] selector:@selector(description) userInfo:nil repeats:NO];
+                    return dummy;
+                }
+
+                // Log other interesting timers
+                if (interval >= 10.0) {
+                    NSLog(@"[WizardBypass] NSTimer: %.1fs target=%s sel=%s (allowed)", interval, targetClass, selName);
+                }
+
+                typedef NSTimer* (*OrigFunc)(Class, SEL, NSTimeInterval, id, SEL, id, BOOL);
+                return ((OrigFunc)origTimer)(self, timerSel, interval, target, selector, userInfo, repeats);
+            });
+            method_setImplementation(timerMethod, newTimer);
+            NSLog(@"[WizardBypass] NSTimer scheduledTimer hook installed");
+        }
+
+        // Also hook timerWithTimeInterval:target:selector:userInfo:repeats: (non-scheduled)
+        SEL timerSel2 = @selector(timerWithTimeInterval:target:selector:userInfo:repeats:);
+        Method timerMethod2 = class_getClassMethod(timerClass, timerSel2);
+        if (timerMethod2) {
+            IMP origTimer2 = method_getImplementation(timerMethod2);
+            IMP newTimer2 = imp_implementationWithBlock(^NSTimer*(Class self, NSTimeInterval interval, id target, SEL selector, id userInfo, BOOL repeats) {
+                const char* targetImage = class_getImageName([target class]);
+                BOOL isWizard = (targetImage && strstr(targetImage, "Wizard.framework"));
+
+                if (isWizard) {
+                    NSLog(@"[WizardBypass] *** BLOCKED timerWithInterval from Wizard: %.1fs sel=%s ***",
+                          interval, sel_getName(selector));
+                    NSTimer *dummy = [NSTimer timerWithTimeInterval:999999 target:[NSNull null] selector:@selector(description) userInfo:nil repeats:NO];
+                    return dummy;
+                }
+
+                typedef NSTimer* (*OrigFunc)(Class, SEL, NSTimeInterval, id, SEL, id, BOOL);
+                return ((OrigFunc)origTimer2)(self, timerSel2, interval, target, selector, userInfo, repeats);
+            });
+            method_setImplementation(timerMethod2, newTimer2);
+            NSLog(@"[WizardBypass] NSTimer timerWithInterval hook installed");
+        }
+    }
+
+    // 2. Hook performSelector:withObject:afterDelay: on NSObject
+    //    Wizard may use delayed selectors as timeouts
+    Class nsobjectClass = objc_getClass("NSObject");
+    if (nsobjectClass) {
+        SEL perfSel = @selector(performSelector:withObject:afterDelay:);
+        Method perfMethod = class_getInstanceMethod(nsobjectClass, perfSel);
+        if (perfMethod) {
+            IMP origPerf = method_getImplementation(perfMethod);
+            IMP newPerf = imp_implementationWithBlock(^(id self, SEL aSelector, id anObject, NSTimeInterval delay) {
+                const char* targetImage = class_getImageName([self class]);
+                BOOL isWizard = (targetImage && strstr(targetImage, "Wizard.framework"));
+
+                if (isWizard && delay >= 5.0) {
+                    NSLog(@"[WizardBypass] *** BLOCKED performSelector:afterDelay from Wizard: %s delay=%.1fs ***",
+                          sel_getName(aSelector), delay);
+                    return;
+                }
+
+                typedef void (*OrigFunc)(id, SEL, SEL, id, NSTimeInterval);
+                ((OrigFunc)origPerf)(self, perfSel, aSelector, anObject, delay);
+            });
+            method_setImplementation(perfMethod, newPerf);
+            NSLog(@"[WizardBypass] performSelector:afterDelay: hook installed");
+        }
+    }
+
+    // 3. Log exit() address (can't hook C functions without fishhook, but timer blocks should suffice)
+    void *exitHandle = dlsym(RTLD_DEFAULT, "exit");
+    if (exitHandle) {
+        NSLog(@"[WizardBypass] exit() at %p (relying on timer blocks to prevent idle kills)", exitHandle);
+    }
+
+    NSLog(@"[WizardBypass] Idle/timeout kill hooks complete");
+}
+
+// ============================================================================
 // DELAYED HOOK - Re-hook after Wizard loads (NO MEMORY PATCHING)
 // ============================================================================
 
@@ -627,6 +729,9 @@ static void delayed_hook(void) {
     // Re-hook NSUserDefaults in case Wizard checks again
     hook_user_defaults();
 
+    // Kill idle/timeout mechanisms
+    hook_idle_timeout_kill();
+
     NSLog(@"[WizardBypass] Delayed hook complete - all hooks refreshed");
 
     // ========================================
@@ -647,16 +752,33 @@ static void delayed_hook(void) {
         SEL drawSel = NSSelectorFromString(@"drawInMTKView:");
         Method drawMethod = class_getInstanceMethod(ajfClass, drawSel);
         if (drawMethod) {
-            // Dump original IMP bytes for anti-tamper analysis
+            // Dump original IMP bytes for anti-tamper analysis (512 bytes)
             IMP originalDraw = method_getImplementation(drawMethod);
             unsigned char *impBytes = (unsigned char *)originalDraw;
-            NSMutableString *hexDump = [NSMutableString string];
-            for (int i = 0; i < 64; i++) {
-                [hexDump appendFormat:@"%02x ", impBytes[i]];
-                if ((i + 1) % 16 == 0) [hexDump appendString:@"\n"];
-            }
             NSLog(@"[WizardBypass] === ORIGINAL drawInMTKView: IMP @ %p ===", originalDraw);
-            NSLog(@"[WizardBypass] %@", hexDump);
+            NSLog(@"[WizardBypass] === DUMPING 512 BYTES FOR ANTI-TAMPER ANALYSIS ===");
+            for (int chunk = 0; chunk < 16; chunk++) {
+                NSMutableString *hexLine = [NSMutableString string];
+                for (int i = 0; i < 32; i++) {
+                    [hexLine appendFormat:@"%02x ", impBytes[chunk * 32 + i]];
+                }
+                NSLog(@"[WizardBypass] +%03x: %@", chunk * 32, hexLine);
+            }
+            // Also look for 0xDEAD pattern specifically
+            for (int i = 0; i < 508; i += 4) {
+                uint32_t instr = *(uint32_t *)(impBytes + i);
+                // Check for MOV with 0xDEAD immediate
+                if ((instr & 0xFFE0001F) == 0xD2800000) {
+                    uint32_t imm16 = (instr >> 5) & 0xFFFF;
+                    if (imm16 == 0xDEAD || imm16 == 0xDEAD) {
+                        NSLog(@"[WizardBypass] !!! FOUND 0xDEAD MOV at offset +%03x: %08x !!!", i, instr);
+                    }
+                }
+                // Check for BR (unconditional branch to register) = 0xD61F0000 + Rn
+                if ((instr & 0xFFFFFC1F) == 0xD61F0000) {
+                    NSLog(@"[WizardBypass] !!! FOUND BR Xn at offset +%03x: %08x !!!", i, instr);
+                }
+            }
 
             // TOTAL NO-OP: Never call original drawInMTKView:
             // This prevents Wizard's anti-tamper code from executing
@@ -741,6 +863,28 @@ static void delayed_hook(void) {
     }
     g_wizardController = [[abvjsmgadjs_class alloc] init];
     NSLog(@"[WizardBypass] Created ABVJSMGADJS controller: %@", g_wizardController);
+
+    // IMMEDIATELY invalidate controller timers to prevent idle/timeout kills
+    Ivar timerIvar1 = class_getInstanceVariable(abvjsmgadjs_class, "_qmshnfuas");
+    Ivar timerIvar2 = class_getInstanceVariable(abvjsmgadjs_class, "_nvjsafhsa");
+    if (timerIvar1) {
+        NSTimer *t1 = object_getIvar(g_wizardController, timerIvar1);
+        if (t1) {
+            [t1 invalidate];
+            NSLog(@"[WizardBypass] Invalidated _qmshnfuas timer: %@", t1);
+        }
+        object_setIvar(g_wizardController, timerIvar1, nil);
+        NSLog(@"[WizardBypass] Set _qmshnfuas = nil");
+    }
+    if (timerIvar2) {
+        NSTimer *t2 = object_getIvar(g_wizardController, timerIvar2);
+        if (t2) {
+            [t2 invalidate];
+            NSLog(@"[WizardBypass] Invalidated _nvjsafhsa timer: %@", t2);
+        }
+        object_setIvar(g_wizardController, timerIvar2, nil);
+        NSLog(@"[WizardBypass] Set _nvjsafhsa = nil");
+    }
 
     // ========================================
     // PHASE 8: CREATE UI + LET IKAFHFDSAJ BUILD MENU + PAUSE METAL
