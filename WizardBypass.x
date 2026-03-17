@@ -1,5 +1,5 @@
 // Wizard Authentication Bypass
-// v33: C-level crypto hooks via fishhook — CCCrypt + memcmp
+// v35: diagnostic hooks to find real key validation path
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -512,30 +512,25 @@ static CCCryptorStatus (*orig_CCCrypt)(CCOperation op, CCAlgorithm alg, CCOption
     const void *key, size_t keyLength, const void *iv,
     const void *dataIn, size_t dataInLength,
     void *dataOut, size_t dataOutAvailable, size_t *dataOutMoved);
-
 static int (*orig_memcmp)(const void *s1, const void *s2, size_t n);
+static int (*orig_strcmp)(const char *s1, const char *s2);
+static unsigned char *(*orig_CC_SHA256)(const void *data, uint32_t len, unsigned char *md);
+static unsigned char *(*orig_CC_MD5)(const void *data, uint32_t len, unsigned char *md);
 
 // ---- FISHHOOK: Replacement CCCrypt ----
-// Always returns kCCSuccess so Wizard thinks decrypt/encrypt succeeded
+// v35: LOG ONLY, do NOT force success (was corrupting 6MB game assets!)
 static CCCryptorStatus replaced_CCCrypt(CCOperation op, CCAlgorithm alg, CCOptions options,
     const void *key, size_t keyLength, const void *iv,
     const void *dataIn, size_t dataInLength,
     void *dataOut, size_t dataOutAvailable, size_t *dataOutMoved) {
-
-    // Call original to get real output (needed for Wizard to process data)
     CCCryptorStatus result = orig_CCCrypt(op, alg, options, key, keyLength, iv,
                                           dataIn, dataInLength, dataOut, dataOutAvailable, dataOutMoved);
-
-    NSLog(@"[WizardBypass] *** CCCrypt called: op=%d alg=%d keyLen=%zu dataLen=%zu -> status=%d (FORCING kCCSuccess) ***",
+    NSLog(@"[WizardBypass] CCCrypt: op=%d alg=%d keyLen=%zu dataLen=%zu -> status=%d",
           op, alg, keyLength, dataInLength, result);
-
-    // FORCE success regardless of actual result
-    return kCCSuccess;
+    return result; // v35: pass through original result
 }
 
 // ---- FISHHOOK: Replacement memcmp ----
-// ONLY force equal when called FROM Wizard.framework â€” prevents corrupting
-// SSL certs, dylib checksums, and other framework comparisons at startup.
 static int replaced_memcmp(const void *s1, const void *s2, size_t n) {
     if (n >= 16 && n <= 64 && caller_is_wizard()) {
         int real_result = orig_memcmp(s1, s2, n);
@@ -547,23 +542,54 @@ static int replaced_memcmp(const void *s1, const void *s2, size_t n) {
     return orig_memcmp(s1, s2, n);
 }
 
+// ---- FISHHOOK: Replacement strcmp ----
+// Catches C-level string comparisons that Wizard might use for key validation
+static int replaced_strcmp(const char *s1, const char *s2) {
+    int result = orig_strcmp(s1, s2);
+    if (caller_is_wizard() && s1 && s2) {
+        size_t l1 = strlen(s1);
+        size_t l2 = strlen(s2);
+        if (l1 > 3 && l1 < 200 && l2 > 3 && l2 < 200) {
+            NSLog(@"[WizardBypass] *** Wizard strcmp: '%s' vs '%s' -> %d ***", s1, s2, result);
+        }
+    }
+    return result;
+}
+
+// ---- FISHHOOK: Replacement CC_SHA256 ----
+static unsigned char *replaced_CC_SHA256(const void *data, uint32_t len, unsigned char *md) {
+    unsigned char *result = orig_CC_SHA256(data, len, md);
+    if (caller_is_wizard()) {
+        NSLog(@"[WizardBypass] *** Wizard CC_SHA256 called: dataLen=%u ***", len);
+    }
+    return result;
+}
+
+// ---- FISHHOOK: Replacement CC_MD5 ----
+static unsigned char *replaced_CC_MD5(const void *data, uint32_t len, unsigned char *md) {
+    unsigned char *result = orig_CC_MD5(data, len, md);
+    if (caller_is_wizard()) {
+        NSLog(@"[WizardBypass] *** Wizard CC_MD5 called: dataLen=%u ***", len);
+    }
+    return result;
+}
+
 static void hook_crypto_auth(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] PHASE 4F: CRYPTO AUTH BYPASS (v33 FISHHOOK)");
+    NSLog(@"[WizardBypass] PHASE 4F: CRYPTO HOOKS (v35 DIAGNOSTIC)");
     NSLog(@"[WizardBypass] ========================================");
 
-    // ---- 1. FISHHOOK: Rebind CCCrypt ----
-    // This ACTUALLY replaces the CCCrypt function pointer in the GOT/PLT
-    // so when Wizard calls CCCrypt, our replaced_CCCrypt runs instead.
     struct rebinding rebindings[] = {
         {"CCCrypt", (void *)replaced_CCCrypt, (void **)&orig_CCCrypt},
         {"memcmp", (void *)replaced_memcmp, (void **)&orig_memcmp},
+        {"strcmp", (void *)replaced_strcmp, (void **)&orig_strcmp},
+        {"CC_SHA256", (void *)replaced_CC_SHA256, (void **)&orig_CC_SHA256},
+        {"CC_MD5", (void *)replaced_CC_MD5, (void **)&orig_CC_MD5},
     };
-    int result = rebind_symbols(rebindings, 2);
+    int result = rebind_symbols(rebindings, 5);
     NSLog(@"[WizardBypass] fishhook rebind_symbols result: %d (0=success)", result);
     if (result == 0) {
-        NSLog(@"[WizardBypass] CCCrypt HOOKED via fishhook (all calls return kCCSuccess)");
-        NSLog(@"[WizardBypass] memcmp HOOKED via fishhook (16-64 byte comparisons forced equal)");
+        NSLog(@"[WizardBypass] Hooked: CCCrypt(log-only) memcmp strcmp CC_SHA256 CC_MD5");
     } else {
         NSLog(@"[WizardBypass] WARNING: fishhook rebind failed!");
     }
@@ -646,7 +672,7 @@ static void hook_crypto_auth(void) {
 
 static void delayed_hook(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] DELAYED HOOK - Wizard should be loaded now (v31)");
+    NSLog(@"[WizardBypass] DELAYED HOOK - v35 diagnostic");
     NSLog(@"[WizardBypass] ========================================");
 
     // Force Wizard BOOL auth flags to YES
@@ -661,13 +687,107 @@ static void delayed_hook(void) {
     // Kill idle/timeout mechanisms
     hook_idle_timeout_kill();
 
-    // v31: Let Wizard initialize its own controller + show its own UI
-    // Do NOT call PADSGFNDSAHJ/IKAFHFDSAJ ourselves â€” let Wizard do it
-    // after the user enters a key in the SCLAlertView dialog.
-    NSLog(@"[WizardBypass] Delayed hook complete (v31c â€” crypto bypass active, NO custom menu)");
+    // v35: Hook specific Wizard methods to log which fire during key submission
+    Class wksClass = objc_getClass("Wksahfnasj");
+    if (wksClass) {
+        // Hook paDJSAFBSANC
+        SEL padSel = sel_registerName("paDJSAFBSANC");
+        Method padMethod = class_getInstanceMethod(wksClass, padSel);
+        if (padMethod) {
+            IMP origPad = method_getImplementation(padMethod);
+            IMP newPad = imp_implementationWithBlock(^id(id self) {
+                NSLog(@"[WizardBypass] *** Wksahfnasj::paDJSAFBSANC CALLED ***");
+                typedef id (*OrigFunc)(id, SEL);
+                return ((OrigFunc)origPad)(self, padSel);
+            });
+            method_setImplementation(padMethod, newPad);
+            NSLog(@"[WizardBypass] Hooked Wksahfnasj::paDJSAFBSANC");
+        }
+        // Hook jsafbSAHCN
+        SEL jsaSel = sel_registerName("jsafbSAHCN");
+        Method jsaMethod = class_getInstanceMethod(wksClass, jsaSel);
+        if (jsaMethod) {
+            IMP origJsa = method_getImplementation(jsaMethod);
+            IMP newJsa = imp_implementationWithBlock(^id(id self) {
+                NSLog(@"[WizardBypass] *** Wksahfnasj::jsafbSAHCN CALLED ***");
+                typedef id (*OrigFunc)(id, SEL);
+                return ((OrigFunc)origJsa)(self, jsaSel);
+            });
+            method_setImplementation(jsaMethod, newJsa);
+            NSLog(@"[WizardBypass] Hooked Wksahfnasj::jsafbSAHCN");
+        }
+        // Hook dgshdsfyewrh
+        SEL dgsSel = sel_registerName("dgshdsfyewrh");
+        Method dgsMethod = class_getInstanceMethod(wksClass, dgsSel);
+        if (dgsMethod) {
+            IMP origDgs = method_getImplementation(dgsMethod);
+            IMP newDgs = imp_implementationWithBlock(^id(id self) {
+                NSLog(@"[WizardBypass] *** Wksahfnasj::dgshdsfyewrh CALLED ***");
+                typedef id (*OrigFunc)(id, SEL);
+                return ((OrigFunc)origDgs)(self, dgsSel);
+            });
+            method_setImplementation(dgsMethod, newDgs);
+            NSLog(@"[WizardBypass] Hooked Wksahfnasj::dgshdsfyewrh");
+        }
+    }
 
+    Class abvClass = objc_getClass("ABVJSMGADJS");
+    if (abvClass) {
+        // Hook PADSGFNDSAHJ
+        SEL pSel = sel_registerName("PADSGFNDSAHJ");
+        Method pMethod = class_getInstanceMethod(abvClass, pSel);
+        if (pMethod) {
+            IMP origP = method_getImplementation(pMethod);
+            IMP newP = imp_implementationWithBlock(^id(id self) {
+                NSLog(@"[WizardBypass] *** ABVJSMGADJS::PADSGFNDSAHJ CALLED ***");
+                typedef id (*OrigFunc)(id, SEL);
+                return ((OrigFunc)origP)(self, pSel);
+            });
+            method_setImplementation(pMethod, newP);
+            NSLog(@"[WizardBypass] Hooked ABVJSMGADJS::PADSGFNDSAHJ");
+        }
+        // Hook IKAFHFDSAJ
+        SEL iSel = sel_registerName("IKAFHFDSAJ");
+        Method iMethod = class_getInstanceMethod(abvClass, iSel);
+        if (iMethod) {
+            IMP origI = method_getImplementation(iMethod);
+            IMP newI = imp_implementationWithBlock(^id(id self) {
+                NSLog(@"[WizardBypass] *** ABVJSMGADJS::IKAFHFDSAJ CALLED ***");
+                typedef id (*OrigFunc)(id, SEL);
+                return ((OrigFunc)origI)(self, iSel);
+            });
+            method_setImplementation(iMethod, newI);
+            NSLog(@"[WizardBypass] Hooked ABVJSMGADJS::IKAFHFDSAJ");
+        }
+        // Hook ASFGAHJFAHS
+        SEL aSel = sel_registerName("ASFGAHJFAHS");
+        Method aMethod = class_getInstanceMethod(abvClass, aSel);
+        if (aMethod) {
+            IMP origA = method_getImplementation(aMethod);
+            IMP newA = imp_implementationWithBlock(^id(id self) {
+                NSLog(@"[WizardBypass] *** ABVJSMGADJS::ASFGAHJFAHS CALLED ***");
+                typedef id (*OrigFunc)(id, SEL);
+                return ((OrigFunc)origA)(self, aSel);
+            });
+            method_setImplementation(aMethod, newA);
+            NSLog(@"[WizardBypass] Hooked ABVJSMGADJS::ASFGAHJFAHS");
+        }
+        // Hook MdhsaJFSAJ
+        SEL mSel = sel_registerName("MdhsaJFSAJ");
+        Method mMethod = class_getInstanceMethod(abvClass, mSel);
+        if (mMethod) {
+            IMP origM = method_getImplementation(mMethod);
+            IMP newM = imp_implementationWithBlock(^id(id self) {
+                NSLog(@"[WizardBypass] *** ABVJSMGADJS::MdhsaJFSAJ CALLED ***");
+                typedef id (*OrigFunc)(id, SEL);
+                return ((OrigFunc)origM)(self, mSel);
+            });
+            method_setImplementation(mMethod, newM);
+            NSLog(@"[WizardBypass] Hooked ABVJSMGADJS::MdhsaJFSAJ");
+        }
+    }
 
-
+    NSLog(@"[WizardBypass] Delayed hook complete (v35 diagnostic - all Wizard methods hooked)");
 }
 
 // ============================================================================
@@ -677,7 +797,7 @@ static void delayed_hook(void) {
 __attribute__((constructor(101)))
 static void wizard_bypass_init(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] v31 CRYPTO AUTH BYPASS - EARLY INIT");
+    NSLog(@"[WizardBypass] v35 DIAGNOSTIC - EARLY INIT");
     NSLog(@"[WizardBypass] ========================================");
 
     // Phase 1: Force all Wizard BOOL auth flags to YES
