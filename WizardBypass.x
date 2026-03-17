@@ -288,79 +288,7 @@ static void hook_user_defaults(void) {
     }
 }
 
-// ============================================================================
-// PHASE 4: SCLAlertView PASSTHROUGH LOGGING (v31 — NO BLOCKING)
-// We LET Wizard's own dialog show so the user can see the key entry prompt.
-// We just log what's shown so we can understand the auth flow.
-// ============================================================================
 
-static void hook_scl_alert_view(void) {
-    NSLog(@"[WizardBypass] v31: SCLAlertView — passthrough logging only (NOT blocking)");
-
-    Class cls = objc_getClass("SCLAlertView");
-    if (!cls) {
-        NSLog(@"[WizardBypass] SCLAlertView not found yet (will retry in delayed hook)");
-        return;
-    }
-
-    unsigned int method_count;
-    Method* methods = class_copyMethodList(cls, &method_count);
-    NSLog(@"[WizardBypass] SCLAlertView has %u methods (NOT hooking — let it show)", method_count);
-    free(methods);
-
-    NSLog(@"[WizardBypass] SCLAlertView hook complete (passthrough)");
-}
-
-// ============================================================================
-// PHASE 4B: HOOK UIAlertController
-// ============================================================================
-
-static void hook_ui_alert_controller(void) {
-    NSLog(@"[WizardBypass] Hooking UIAlertController...");
-
-    Class alert_class = objc_getClass("UIAlertController");
-    if (!alert_class) {
-        NSLog(@"[WizardBypass] WARNING: UIAlertController not found");
-        return;
-    }
-
-    // Hook alertControllerWithTitle:message:preferredStyle:
-    SEL selector = @selector(alertControllerWithTitle:message:preferredStyle:);
-    Method method = class_getClassMethod(alert_class, selector);
-
-    if (method) {
-        IMP original_imp = method_getImplementation(method);
-        IMP new_imp = imp_implementationWithBlock(^UIAlertController*(Class self, NSString* title, NSString* message, UIAlertControllerStyle style) {
-            // Check if this is an auth-related alert
-            NSString* lowerTitle = [title lowercaseString];
-            NSString* lowerMsg = [message lowercaseString];
-
-            if ([lowerTitle containsString:@"auth"] || [lowerTitle containsString:@"license"] ||
-                [lowerTitle containsString:@"key"] || [lowerTitle containsString:@"wizard"] ||
-                [lowerMsg containsString:@"auth"] || [lowerMsg containsString:@"license"]) {
-                NSLog(@"[WizardBypass] ✓ BLOCKED UIAlertController: %@", title);
-                return nil;
-            }
-
-            // Call original for non-auth alerts
-            typedef UIAlertController* (*OrigFunc)(Class, SEL, NSString*, NSString*, UIAlertControllerStyle);
-            return ((OrigFunc)original_imp)(self, selector, title, message, style);
-        });
-
-        method_setImplementation(method, new_imp);
-        NSLog(@"[WizardBypass] UIAlertController hook installed");
-    }
-}
-
-// ============================================================================
-// PHASE 4B2: HOOK SCLAlertViewShowBuilder - The builder pattern
-// ============================================================================
-
-static void hook_scl_alert_view_show_builder(void) {
-    // v31: NO BLOCKING — let SCLAlertViewShowBuilder work normally
-    // so Wizard's key entry UI flows through to completion
-    NSLog(@"[WizardBypass] v31: SCLAlertViewShowBuilder — NOT hooking (let Wizard UI show)");
-}
 
 // ============================================================================
 // PHASE 4C: HOOK UIViewController presentation
