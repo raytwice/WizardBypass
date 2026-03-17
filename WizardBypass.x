@@ -534,14 +534,14 @@ static CCCryptorStatus replaced_CCCrypt(CCOperation op, CCAlgorithm alg, CCOptio
 }
 
 // ---- FISHHOOK: Replacement memcmp ----
-// For crypto-sized buffers (16-64 bytes), return 0 (equal)
+// ONLY force equal when called FROM Wizard.framework â€” prevents corrupting
+// SSL certs, dylib checksums, and other framework comparisons at startup.
 static int replaced_memcmp(const void *s1, const void *s2, size_t n) {
-    // Only force equal for crypto hash sizes (MD5=16, SHA1=20, SHA256=32, SHA512=64)
-    if (n >= 16 && n <= 64) {
+    if (n >= 16 && n <= 64 && caller_is_wizard()) {
         int real_result = orig_memcmp(s1, s2, n);
         if (real_result != 0) {
-            NSLog(@"[WizardBypass] *** memcmp(%zu bytes) MISMATCH -> FORCING EQUAL (crypto bypass) ***", n);
-            return 0;  // Force equal
+            NSLog(@"[WizardBypass] *** Wizard memcmp(%zu bytes) MISMATCH -> FORCING EQUAL ***", n);
+            return 0;
         }
     }
     return orig_memcmp(s1, s2, n);
