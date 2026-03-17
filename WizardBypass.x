@@ -679,107 +679,53 @@ static void delayed_hook(void) {
     // Kill idle/timeout mechanisms
     hook_idle_timeout_kill();
 
-    // v35: Hook specific Wizard methods to log which fire during key submission
+    // v35c: Hook Wizard methods with VOID blocks (safe for any return type)
+    // Use method_getTypeEncoding to log return type for debugging
     Class wksClass = objc_getClass("Wksahfnasj");
     if (wksClass) {
-        // Hook paDJSAFBSANC
-        SEL padSel = sel_registerName("paDJSAFBSANC");
-        Method padMethod = class_getInstanceMethod(wksClass, padSel);
-        if (padMethod) {
-            IMP origPad = method_getImplementation(padMethod);
-            IMP newPad = imp_implementationWithBlock(^id(id self) {
-                NSLog(@"[WizardBypass] *** Wksahfnasj::paDJSAFBSANC CALLED ***");
-                typedef id (*OrigFunc)(id, SEL);
-                return ((OrigFunc)origPad)(self, padSel);
-            });
-            method_setImplementation(padMethod, newPad);
-            NSLog(@"[WizardBypass] Hooked Wksahfnasj::paDJSAFBSANC");
-        }
-        // Hook jsafbSAHCN
-        SEL jsaSel = sel_registerName("jsafbSAHCN");
-        Method jsaMethod = class_getInstanceMethod(wksClass, jsaSel);
-        if (jsaMethod) {
-            IMP origJsa = method_getImplementation(jsaMethod);
-            IMP newJsa = imp_implementationWithBlock(^id(id self) {
-                NSLog(@"[WizardBypass] *** Wksahfnasj::jsafbSAHCN CALLED ***");
-                typedef id (*OrigFunc)(id, SEL);
-                return ((OrigFunc)origJsa)(self, jsaSel);
-            });
-            method_setImplementation(jsaMethod, newJsa);
-            NSLog(@"[WizardBypass] Hooked Wksahfnasj::jsafbSAHCN");
-        }
-        // Hook dgshdsfyewrh
-        SEL dgsSel = sel_registerName("dgshdsfyewrh");
-        Method dgsMethod = class_getInstanceMethod(wksClass, dgsSel);
-        if (dgsMethod) {
-            IMP origDgs = method_getImplementation(dgsMethod);
-            IMP newDgs = imp_implementationWithBlock(^id(id self) {
-                NSLog(@"[WizardBypass] *** Wksahfnasj::dgshdsfyewrh CALLED ***");
-                typedef id (*OrigFunc)(id, SEL);
-                return ((OrigFunc)origDgs)(self, dgsSel);
-            });
-            method_setImplementation(dgsMethod, newDgs);
-            NSLog(@"[WizardBypass] Hooked Wksahfnasj::dgshdsfyewrh");
+        NSString *methodNames[] = {@"paDJSAFBSANC", @"jsafbSAHCN", @"dgshdsfyewrh"};
+        for (int i = 0; i < 3; i++) {
+            SEL sel = sel_registerName([methodNames[i] UTF8String]);
+            Method m = class_getInstanceMethod(wksClass, sel);
+            if (m) {
+                const char *types = method_getTypeEncoding(m);
+                NSLog(@"[WizardBypass] Wksahfnasj::%@ type='%s'", methodNames[i], types ? types : "?");
+                __block IMP origImp = method_getImplementation(m);
+                __block SEL origSel = sel;
+                __block NSString *name = methodNames[i];
+                IMP newImp = imp_implementationWithBlock(^void(id self) {
+                    NSLog(@"[WizardBypass] *** Wksahfnasj::%@ CALLED ***", name);
+                    typedef void (*VoidFunc)(id, SEL);
+                    ((VoidFunc)origImp)(self, origSel);
+                });
+                method_setImplementation(m, newImp);
+            }
         }
     }
 
     Class abvClass = objc_getClass("ABVJSMGADJS");
     if (abvClass) {
-        // Hook PADSGFNDSAHJ
-        SEL pSel = sel_registerName("PADSGFNDSAHJ");
-        Method pMethod = class_getInstanceMethod(abvClass, pSel);
-        if (pMethod) {
-            IMP origP = method_getImplementation(pMethod);
-            IMP newP = imp_implementationWithBlock(^id(id self) {
-                NSLog(@"[WizardBypass] *** ABVJSMGADJS::PADSGFNDSAHJ CALLED ***");
-                typedef id (*OrigFunc)(id, SEL);
-                return ((OrigFunc)origP)(self, pSel);
-            });
-            method_setImplementation(pMethod, newP);
-            NSLog(@"[WizardBypass] Hooked ABVJSMGADJS::PADSGFNDSAHJ");
-        }
-        // Hook IKAFHFDSAJ
-        SEL iSel = sel_registerName("IKAFHFDSAJ");
-        Method iMethod = class_getInstanceMethod(abvClass, iSel);
-        if (iMethod) {
-            IMP origI = method_getImplementation(iMethod);
-            IMP newI = imp_implementationWithBlock(^id(id self) {
-                NSLog(@"[WizardBypass] *** ABVJSMGADJS::IKAFHFDSAJ CALLED ***");
-                typedef id (*OrigFunc)(id, SEL);
-                return ((OrigFunc)origI)(self, iSel);
-            });
-            method_setImplementation(iMethod, newI);
-            NSLog(@"[WizardBypass] Hooked ABVJSMGADJS::IKAFHFDSAJ");
-        }
-        // Hook ASFGAHJFAHS
-        SEL aSel = sel_registerName("ASFGAHJFAHS");
-        Method aMethod = class_getInstanceMethod(abvClass, aSel);
-        if (aMethod) {
-            IMP origA = method_getImplementation(aMethod);
-            IMP newA = imp_implementationWithBlock(^id(id self) {
-                NSLog(@"[WizardBypass] *** ABVJSMGADJS::ASFGAHJFAHS CALLED ***");
-                typedef id (*OrigFunc)(id, SEL);
-                return ((OrigFunc)origA)(self, aSel);
-            });
-            method_setImplementation(aMethod, newA);
-            NSLog(@"[WizardBypass] Hooked ABVJSMGADJS::ASFGAHJFAHS");
-        }
-        // Hook MdhsaJFSAJ
-        SEL mSel = sel_registerName("MdhsaJFSAJ");
-        Method mMethod = class_getInstanceMethod(abvClass, mSel);
-        if (mMethod) {
-            IMP origM = method_getImplementation(mMethod);
-            IMP newM = imp_implementationWithBlock(^id(id self) {
-                NSLog(@"[WizardBypass] *** ABVJSMGADJS::MdhsaJFSAJ CALLED ***");
-                typedef id (*OrigFunc)(id, SEL);
-                return ((OrigFunc)origM)(self, mSel);
-            });
-            method_setImplementation(mMethod, newM);
-            NSLog(@"[WizardBypass] Hooked ABVJSMGADJS::MdhsaJFSAJ");
+        NSString *methodNames[] = {@"PADSGFNDSAHJ", @"IKAFHFDSAJ", @"ASFGAHJFAHS", @"MdhsaJFSAJ"};
+        for (int i = 0; i < 4; i++) {
+            SEL sel = sel_registerName([methodNames[i] UTF8String]);
+            Method m = class_getInstanceMethod(abvClass, sel);
+            if (m) {
+                const char *types = method_getTypeEncoding(m);
+                NSLog(@"[WizardBypass] ABVJSMGADJS::%@ type='%s'", methodNames[i], types ? types : "?");
+                __block IMP origImp = method_getImplementation(m);
+                __block SEL origSel = sel;
+                __block NSString *name = methodNames[i];
+                IMP newImp = imp_implementationWithBlock(^void(id self) {
+                    NSLog(@"[WizardBypass] *** ABVJSMGADJS::%@ CALLED ***", name);
+                    typedef void (*VoidFunc)(id, SEL);
+                    ((VoidFunc)origImp)(self, origSel);
+                });
+                method_setImplementation(m, newImp);
+            }
         }
     }
 
-    NSLog(@"[WizardBypass] Delayed hook complete (v35 diagnostic - all Wizard methods hooked)");
+    NSLog(@"[WizardBypass] Delayed hook complete (v35c - void-safe method hooks)");
 }
 
 // ============================================================================
