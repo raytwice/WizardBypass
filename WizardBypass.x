@@ -18,7 +18,7 @@
 static id g_wizardController = nil;
 static id g_wizardIcon = nil;
 
-// v25: NO Wizard method hooks at all. Anti-tamper detects IMP changes on Wizard classes.
+// v28: Safe no-op drawInMTKView + hex dump. v27 flag-preset crashed (bad ADRP decode).
 // Only system-level hooks (UIKit, NSUserDefaults, SCLAlertView, dyld) are used.
 
 // ============================================================================
@@ -812,60 +812,62 @@ static void delayed_hook(void) {
             NSLog(@"[WizardBypass] === drawInMTKView: IMP @ %p ===", originalDraw);
 
             // ================================================================
-            // FLAG-PRESET APPROACH: Set anti-tamper flag to 1 before rendering
+            // v28: SAFE NO-OP + HEX DUMP (reverted from v27 flag-preset crash)
             // ================================================================
-            // Code patching fails (SIGBUS - code signing enforcement).
-            // Instead, decode the flag address from ADRP+ADD at +0x1C/+0x20,
-            // then hook drawInMTKView to pre-set the flag to 1 BEFORE calling
-            // original. The CBNZ at +0x28 sees flag!=0 → skips integrity check.
+            // v27 crashed because ADRP+ADD decode produced a bad address.
+            // Strategy: dump 128 bytes of the original IMP for manual analysis,
+            // then replace with no-op (proven safe in v18/v24).
             // ================================================================
 
+            // STEP 1: Hex dump 128 bytes of original IMP for offline analysis
             unsigned char *impPtr = (unsigned char *)originalDraw;
-            uint32_t adrpInstr = *(uint32_t *)(impPtr + 0x1C);
-            uint32_t addInstr  = *(uint32_t *)(impPtr + 0x20);
+            NSLog(@"[WizardBypass] ========================================");
+            NSLog(@"[WizardBypass] DUMPING 128 BYTES OF drawInMTKView: IMP");
+            NSLog(@"[WizardBypass] IMP address: %p", originalDraw);
+            NSLog(@"[WizardBypass] ========================================");
+            for (int row = 0; row < 8; row++) {
+                int off = row * 16;
+                NSLog(@"[WizardBypass] +%03x: %02x %02x %02x %02x  %02x %02x %02x %02x  %02x %02x %02x %02x  %02x %02x %02x %02x",
+                      off,
+                      impPtr[off+0],  impPtr[off+1],  impPtr[off+2],  impPtr[off+3],
+                      impPtr[off+4],  impPtr[off+5],  impPtr[off+6],  impPtr[off+7],
+                      impPtr[off+8],  impPtr[off+9],  impPtr[off+10], impPtr[off+11],
+                      impPtr[off+12], impPtr[off+13], impPtr[off+14], impPtr[off+15]);
+            }
+            // Also dump as 32-bit words for ARM64 instruction decode
+            uint32_t *instrPtr = (uint32_t *)originalDraw;
+            NSLog(@"[WizardBypass] --- ARM64 instructions (32 words) ---");
+            for (int i = 0; i < 32; i++) {
+                uint32_t instr = instrPtr[i];
+                // Basic ARM64 instruction identification
+                const char *hint = "";
+                if ((instr & 0x9F000000) == 0x90000000) hint = " <-- ADRP";
+                else if ((instr & 0x7F800000) == 0x11000000) hint = " <-- ADD imm";
+                else if ((instr & 0xFF000000) == 0x35000000) hint = " <-- CBNZ W";
+                else if ((instr & 0xFF000000) == 0xB5000000) hint = " <-- CBNZ X";
+                else if ((instr & 0xFF000000) == 0x34000000) hint = " <-- CBZ W";
+                else if ((instr & 0xFF000000) == 0xB4000000) hint = " <-- CBZ X";
+                else if ((instr & 0xFFE00000) == 0xD2800000) hint = " <-- MOVZ";
+                else if ((instr & 0xFFE00000) == 0xF2A00000) hint = " <-- MOVK (lsl#16)";
+                else if ((instr & 0xFC000000) == 0x14000000) hint = " <-- B";
+                else if ((instr & 0xFF000010) == 0x54000000) hint = " <-- B.cond";
+                else if ((instr & 0xFFFFFC1F) == 0xD61F0000) hint = " <-- BR";
+                else if ((instr & 0xFFFFFC1F) == 0xD63F0000) hint = " <-- BLR";
+                else if ((instr & 0xFFE0001F) == 0xD65F0000) hint = " <-- RET";
+                else if ((instr & 0x7FC00000) == 0x29000000) hint = " <-- STP";
+                else if ((instr & 0x7FC00000) == 0x29400000) hint = " <-- LDP";
+                else if ((instr & 0x3B000000) == 0x39000000) hint = " <-- LDR/STR imm";
+                NSLog(@"[WizardBypass] [%02d] +0x%03x: 0x%08x%s", i, i*4, instr, hint);
+            }
+            NSLog(@"[WizardBypass] ========================================");
 
-            NSLog(@"[WizardBypass] ADRP @ +0x1C: 0x%08x", adrpInstr);
-            NSLog(@"[WizardBypass] ADD  @ +0x20: 0x%08x", addInstr);
-
-            // Decode ADRP Xd, #page_offset
-            // ADRP encoding: 1 | immlo(2) | 10000 | immhi(19) | Rd(5)
-            uint32_t adrp_immlo = (adrpInstr >> 29) & 0x3;
-            uint32_t adrp_immhi = (adrpInstr >> 5) & 0x7FFFF;
-            int64_t adrp_imm = (int64_t)(((uint64_t)adrp_immhi << 2) | adrp_immlo);
-            // Sign-extend from 21 bits
-            if (adrp_imm & (1LL << 20)) adrp_imm |= ~((1LL << 21) - 1);
-            uint64_t adrpPC = ((uint64_t)impPtr + 0x1C) & ~0xFFFULL; // PC page-aligned
-            uint64_t adrpResult = adrpPC + (adrp_imm << 12);
-
-            // Decode ADD Xd, Xn, #imm12
-            // ADD encoding: sf(1) | 00 | 10001 | sh(1) | imm12(12) | Rn(5) | Rd(5)
-            uint32_t add_imm12 = (addInstr >> 10) & 0xFFF;
-            uint32_t add_shift = (addInstr >> 22) & 0x1;
-            uint64_t addResult = adrpResult + (add_shift ? (add_imm12 << 12) : add_imm12);
-
-            NSLog(@"[WizardBypass] Anti-tamper flag address: %p", (void *)addResult);
-
-            // Verify we can read the flag
-            __block volatile uint8_t *flagPtr = (volatile uint8_t *)addResult;
-            uint8_t flagValue = *flagPtr;
-            NSLog(@"[WizardBypass] Flag current value: %d (0=check pending, 1=check passed)", flagValue);
-
-            // Pre-set the flag to 1 NOW
-            *flagPtr = 1;
-            NSLog(@"[WizardBypass] Flag PRE-SET to 1 (integrity check will be skipped)");
-
-            // Also hook drawInMTKView to ensure flag stays 1 on every call
-            __block IMP origDrawIMP = originalDraw;
-            IMP flagPresetDraw = imp_implementationWithBlock(^(id selfDraw, id mtkView) {
-                // Ensure flag is always 1 before the original runs
-                *flagPtr = 1;
-                // Call original drawInMTKView — CBNZ sees flag=1, skips check
-                typedef void (*DrawFunc)(id, SEL, id);
-                ((DrawFunc)origDrawIMP)(selfDraw, @selector(drawInMTKView:), mtkView);
+            // STEP 2: Replace with SAFE NO-OP (never calls original)
+            IMP noopDraw = imp_implementationWithBlock(^(id selfDraw, id mtkView) {
+                // Complete no-op — anti-tamper code never executes
+                // Menu will be blank but game won't crash
             });
-            method_setImplementation(drawMethod, flagPresetDraw);
-            NSLog(@"[WizardBypass] drawInMTKView HOOKED with flag-preset wrapper");
-            NSLog(@"[WizardBypass] >>> ANTI-TAMPER BYPASSED — flag pre-set to skip integrity check <<<");
+            method_setImplementation(drawMethod, noopDraw);
+            NSLog(@"[WizardBypass] drawInMTKView: replaced with SAFE NO-OP (v28)");
         }
 
         // Log initializePlatform (not hooked, runs natively)
