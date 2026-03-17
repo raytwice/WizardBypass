@@ -94,31 +94,19 @@ static void force_authentication(void) {
         NSLog(@"[WizardBypass] Scanning Wizard class: %s", class_name);
         hooked_classes++;
 
-        // SPECIAL: Hook init methods for key obfuscated classes
-        if (strcmp(class_name, "Pajdsakdfj") == 0 || strcmp(class_name, "Wksahfnasj") == 0) {
-            NSLog(@"[WizardBypass] *** FOUND KEY CLASS: %s - Hooking ALL methods ***", class_name);
+        // LOG key obfuscated classes but DON'T hook them blindly
+        // (blind varargs hooking breaks methods with non-object params)
+        if (strcmp(class_name, "Pajdsakdfj") == 0 || strcmp(class_name, "Wksahfnasj") == 0 ||
+            strcmp(class_name, "AJFADSHFSAJXN") == 0 || strcmp(class_name, "ABVJSMGADJS") == 0) {
+            NSLog(@"[WizardBypass] *** FOUND KEY CLASS: %s ***", class_name);
 
             unsigned int all_method_count;
             Method* all_methods = class_copyMethodList(classes[i], &all_method_count);
-
             for (unsigned int k = 0; k < all_method_count; k++) {
                 SEL sel = method_getName(all_methods[k]);
                 const char* method_name = sel_getName(sel);
-
                 NSLog(@"[WizardBypass]   Method: %s::%s", class_name, method_name);
-
-                // Hook ALL methods to log when they're called
-                IMP original = method_getImplementation(all_methods[k]);
-                IMP new_imp = imp_implementationWithBlock(^id(id self, ...) {
-                    NSLog(@"[WizardBypass] *** CALLED: %s::%s ***", class_name, method_name);
-
-                    // Call original
-                    typedef id (*OrigFunc)(id, SEL, ...);
-                    return ((OrigFunc)original)(self, sel);
-                });
-                method_setImplementation(all_methods[k], new_imp);
             }
-
             free(all_methods);
         }
 
@@ -130,9 +118,9 @@ static void force_authentication(void) {
             const char* name = sel_getName(selector);
             char* type_encoding = method_copyReturnType(methods[j]);
 
-            // Skip lifecycle methods
+            // Skip lifecycle/destructor methods ONLY — DO NOT skip setters!
+            // Auth flag setters MUST be hooked so they can't reset auth to NO
             if (strncmp(name, "init", 4) == 0 ||
-                strncmp(name, "set", 3) == 0 ||
                 strcmp(name, "dealloc") == 0 ||
                 strcmp(name, ".cxx_destruct") == 0) {
                 free(type_encoding);
@@ -643,134 +631,93 @@ static void delayed_hook(void) {
     if (pajdsakdfj_class) {
         NSLog(@"[WizardBypass] Found Pajdsakdfj class, creating instance...");
 
-        // HOOK didTapIconView to force menu display
+        // OPTION A: Let original didTapIconView run naturally
+        // Instead of manually creating Wksahfnasj (Metal-backed, crashes without GPU setup),
+        // we just log the tap and let the original code create the menu.
+        // Auth is handled by force_authentication() hooking all BOOL methods to YES.
         SEL tapSelector = NSSelectorFromString(@"didTapIconView");
         Method tapMethod = class_getInstanceMethod(pajdsakdfj_class, tapSelector);
         if (tapMethod) {
-            NSLog(@"[WizardBypass] Hooking didTapIconView to force menu display");
+            NSLog(@"[WizardBypass] Installing didTapIconView LOGGING hook (not replacing)");
             IMP originalTap = method_getImplementation(tapMethod);
             IMP newTap = imp_implementationWithBlock(^(id self) {
-                NSLog(@"[WizardBypass] 🔵 didTapIconView CALLED - forcing menu display");
+                NSLog(@"[WizardBypass] ========================================");
+                NSLog(@"[WizardBypass] 🔵 didTapIconView CALLED");
+                NSLog(@"[WizardBypass] ========================================");
 
-                // Call original first to see what happens
+                // Log the _jdsghadurewmf (Wksahfnasj menu) ivar state before tap
+                Ivar menuIvar = class_getInstanceVariable([self class], "_jdsghadurewmf");
+                if (menuIvar) {
+                    id menuRef = object_getIvar(self, menuIvar);
+                    NSLog(@"[WizardBypass] _jdsghadurewmf (menu) before tap: %@", menuRef);
+                }
+
+                // Log the _paJFSAUJJFSAC (AJFADSHFSAJXN controller) state
+                Ivar ctrlIvar = class_getInstanceVariable([self class], "_paJFSAUJJFSAC");
+                if (ctrlIvar) {
+                    id ctrlRef = object_getIvar(self, ctrlIvar);
+                    NSLog(@"[WizardBypass] _paJFSAUJJFSAC (controller) before tap: %@", ctrlRef);
+
+                    // FORCE AUTH: Set all BOOL ivars on the controller to YES
+                    if (ctrlRef) {
+                        unsigned int ivarCount;
+                        Ivar *ivars = class_copyIvarList([ctrlRef class], &ivarCount);
+                        for (unsigned int i = 0; i < ivarCount; i++) {
+                            const char *type = ivar_getTypeEncoding(ivars[i]);
+                            const char *ivarName = ivar_getName(ivars[i]);
+                            if (type && (type[0] == 'B' || type[0] == 'c')) {
+                                ptrdiff_t offset = ivar_getOffset(ivars[i]);
+                                BOOL *boolPtr = (BOOL *)((char *)(__bridge void *)ctrlRef + offset);
+                                NSLog(@"[WizardBypass] Forcing controller ivar %s = YES (was %d)", ivarName, *boolPtr);
+                                *boolPtr = YES;
+                            }
+                        }
+                        free(ivars);
+                    }
+                }
+
+                // ALSO force auth on ALL Wizard classes' BOOL ivars on self (Pajdsakdfj)
+                {
+                    unsigned int ivarCount;
+                    Ivar *ivars = class_copyIvarList([self class], &ivarCount);
+                    for (unsigned int i = 0; i < ivarCount; i++) {
+                        const char *type = ivar_getTypeEncoding(ivars[i]);
+                        const char *ivarName = ivar_getName(ivars[i]);
+                        if (type && (type[0] == 'B' || type[0] == 'c')) {
+                            ptrdiff_t offset = ivar_getOffset(ivars[i]);
+                            BOOL *boolPtr = (BOOL *)((char *)(__bridge void *)self + offset);
+                            NSLog(@"[WizardBypass] Forcing icon ivar %s = YES (was %d)", ivarName, *boolPtr);
+                            *boolPtr = YES;
+                        }
+                    }
+                    free(ivars);
+                }
+
+                // NOW call the original didTapIconView - let Wizard create menu naturally
+                NSLog(@"[WizardBypass] Calling ORIGINAL didTapIconView...");
                 typedef void (*OrigFunc)(id, SEL);
                 ((OrigFunc)originalTap)(self, tapSelector);
-                NSLog(@"[WizardBypass] Original didTapIconView completed");
+                NSLog(@"[WizardBypass] Original didTapIconView RETURNED (no crash!)");
 
-                // Now try to manually show the menu
-                NSLog(@"[WizardBypass] Attempting to show menu manually...");
-
-                // Look for Wksahfnasj class (likely the menu controller)
-                Class menuClass = objc_getClass("Wksahfnasj");
-                if (menuClass) {
-                    NSLog(@"[WizardBypass] Found Wksahfnasj (menu class)");
-
-                    // Get the key window
-                    UIWindow* keyWindow = nil;
-                    NSArray* windows = [[UIApplication sharedApplication] windows];
-                    for (UIWindow* window in windows) {
-                        if (window.isKeyWindow) {
-                            keyWindow = window;
-                            break;
-                        }
-                    }
-
-                    if (!keyWindow && [windows count] > 0) {
-                        keyWindow = [windows objectAtIndex:0];
-                    }
-
-                    if (keyWindow) {
-                        // Create menu with initWithFrame:type: (like Pajdsakdfj)
-                        CGRect menuFrame = CGRectMake(50, 50, keyWindow.bounds.size.width - 100, keyWindow.bounds.size.height - 100);
-
-                        // Try initWithFrame:type: first (same as icon creation)
-                        SEL initFrameTypeSel = @selector(initWithFrame:type:);
-                        if ([menuClass instancesRespondToSelector:initFrameTypeSel]) {
-                            NSLog(@"[WizardBypass] Wksahfnasj responds to initWithFrame:type:, using it...");
-
-                            // Use objc_msgSend to call initWithFrame:type: with type=0
-                            id menuInstance = ((id (*)(id, SEL, CGRect, NSInteger))objc_msgSend)(
-                                [menuClass alloc],
-                                initFrameTypeSel,
-                                menuFrame,
-                                0  // type = 0 (normal menu, like icon)
-                            );
-
-                            if (menuInstance) {
-                                NSLog(@"[WizardBypass] ✓ Created menu instance with initWithFrame:type:: %@", menuInstance);
-
-                                // Set it visible
-                                [(UIView*)menuInstance setHidden:NO];
-                                [(UIView*)menuInstance setAlpha:1.0];
-                                [(UIView*)menuInstance setBackgroundColor:[UIColor colorWithWhite:0.1 alpha:0.9]];
-
-                                // Add to window
-                                [keyWindow addSubview:(UIView*)menuInstance];
-                                [keyWindow bringSubviewToFront:(UIView*)menuInstance];
-
-                                NSLog(@"[WizardBypass] ✓✓✓ Menu added to window!");
-                            } else {
-                                NSLog(@"[WizardBypass] initWithFrame:type: returned nil");
-                            }
-                        } else {
-                            // Fallback to initWithFrame:
-                            NSLog(@"[WizardBypass] Wksahfnasj doesn't respond to initWithFrame:type:, trying initWithFrame:...");
-
-                            SEL initFrameSel = @selector(initWithFrame:);
-                            if ([menuClass instancesRespondToSelector:initFrameSel]) {
-                                id menuInstance = [[menuClass alloc] initWithFrame:menuFrame];
-
-                                if (menuInstance) {
-                                    NSLog(@"[WizardBypass] Created menu instance: %@", menuInstance);
-
-                                    // Set it visible
-                                    [(UIView*)menuInstance setHidden:NO];
-                                    [(UIView*)menuInstance setAlpha:1.0];
-                                    [(UIView*)menuInstance setBackgroundColor:[UIColor colorWithWhite:0.1 alpha:0.9]];
-
-                                    // Add to window
-                                    [keyWindow addSubview:(UIView*)menuInstance];
-                                    [keyWindow bringSubviewToFront:(UIView*)menuInstance];
-
-                                    NSLog(@"[WizardBypass] ✓✓✓ Menu added to window!");
-                                } else {
-                                    NSLog(@"[WizardBypass] initWithFrame: returned nil");
-                                }
-                            } else {
-                                NSLog(@"[WizardBypass] Wksahfnasj doesn't respond to initWithFrame: either");
-                            }
+                // Log the _jdsghadurewmf state AFTER tap to see if menu was created
+                if (menuIvar) {
+                    id menuRef = object_getIvar(self, menuIvar);
+                    NSLog(@"[WizardBypass] _jdsghadurewmf (menu) after tap: %@", menuRef);
+                    if (menuRef) {
+                        NSLog(@"[WizardBypass] ✓✓✓ MENU WAS CREATED BY ORIGINAL CODE!");
+                        // Make sure it's visible
+                        if ([menuRef isKindOfClass:[UIView class]]) {
+                            [(UIView*)menuRef setHidden:NO];
+                            [(UIView*)menuRef setAlpha:1.0];
+                            NSLog(@"[WizardBypass] ✓ Ensured menu visibility");
                         }
                     } else {
-                        NSLog(@"[WizardBypass] No key window found for menu");
+                        NSLog(@"[WizardBypass] ✗ Menu still nil after original tap - auth may still be failing");
                     }
-                } else {
-                    NSLog(@"[WizardBypass] Wksahfnasj class not found, searching for menu classes...");
-
-                    // Search for any class that might be the menu
-                    unsigned int classCount;
-                    Class *allClasses = objc_copyClassList(&classCount);
-                    for (unsigned int i = 0; i < classCount; i++) {
-                        const char* className = class_getName(allClasses[i]);
-                        const char* imageName = class_getImageName(allClasses[i]);
-
-                        if (imageName && strstr(imageName, "Wizard.framework")) {
-                            // Look for classes with "menu", "view", "controller" in methods
-                            unsigned int methodCount;
-                            Method *methods = class_copyMethodList(allClasses[i], &methodCount);
-                            for (unsigned int j = 0; j < methodCount; j++) {
-                                const char* methodName = sel_getName(method_getName(methods[j]));
-                                if (strcasestr(methodName, "menu") || strcasestr(methodName, "show") || strcasestr(methodName, "present")) {
-                                    NSLog(@"[WizardBypass] Found potential menu class: %s with method: %s", className, methodName);
-                                }
-                            }
-                            free(methods);
-                        }
-                    }
-                    free(allClasses);
                 }
             });
             method_setImplementation(tapMethod, newTap);
-            NSLog(@"[WizardBypass] ✓ didTapIconView hook installed");
+            NSLog(@"[WizardBypass] ✓ didTapIconView hook installed (Option A: log + let original run)");
         } else {
             NSLog(@"[WizardBypass] WARNING: didTapIconView method not found");
         }
@@ -889,6 +836,84 @@ static void delayed_hook(void) {
                     NSLog(@"[WizardBypass] ✓✓✓ Added Wizard icon to window!");
                     NSLog(@"[WizardBypass] Final frame: %@", NSStringFromCGRect([iconView frame]));
                     NSLog(@"[WizardBypass] Subviews: %@", [(UIView*)iconView subviews]);
+
+                    // ========================================
+                    // FORCE AUTH IVARS on the icon + controller
+                    // ========================================
+                    NSLog(@"[WizardBypass] ========================================");
+                    NSLog(@"[WizardBypass] FORCING AUTH IVARS ON ICON AND CONTROLLER");
+                    NSLog(@"[WizardBypass] ========================================");
+
+                    // Force all BOOL ivars on Pajdsakdfj to YES
+                    unsigned int iconIvarCount;
+                    Ivar *iconIvars = class_copyIvarList(pajdsakdfj_class, &iconIvarCount);
+                    for (unsigned int idx = 0; idx < iconIvarCount; idx++) {
+                        const char *type = ivar_getTypeEncoding(iconIvars[idx]);
+                        const char *ivarName = ivar_getName(iconIvars[idx]);
+                        if (type && (type[0] == 'B' || type[0] == 'c')) {
+                            ptrdiff_t offset = ivar_getOffset(iconIvars[idx]);
+                            BOOL *boolPtr = (BOOL *)((char *)(__bridge void *)iconView + offset);
+                            NSLog(@"[WizardBypass] Force icon BOOL ivar: %s = YES (was %d)", ivarName, *boolPtr);
+                            *boolPtr = YES;
+                        }
+                    }
+                    free(iconIvars);
+
+                    // Get the AJFADSHFSAJXN controller via _paJFSAUJJFSAC ivar
+                    Ivar controllerIvar = class_getInstanceVariable(pajdsakdfj_class, "_paJFSAUJJFSAC");
+                    if (controllerIvar) {
+                        id controller = object_getIvar(iconView, controllerIvar);
+                        NSLog(@"[WizardBypass] _paJFSAUJJFSAC controller: %@", controller);
+
+                        if (controller) {
+                            // Force all BOOL ivars on the controller to YES
+                            unsigned int ctrlIvarCount;
+                            Ivar *ctrlIvars = class_copyIvarList([controller class], &ctrlIvarCount);
+                            for (unsigned int idx = 0; idx < ctrlIvarCount; idx++) {
+                                const char *type = ivar_getTypeEncoding(ctrlIvars[idx]);
+                                const char *ivarName = ivar_getName(ctrlIvars[idx]);
+                                if (type && (type[0] == 'B' || type[0] == 'c')) {
+                                    ptrdiff_t offset = ivar_getOffset(ctrlIvars[idx]);
+                                    BOOL *boolPtr = (BOOL *)((char *)(__bridge void *)controller + offset);
+                                    NSLog(@"[WizardBypass] Force controller BOOL ivar: %s = YES (was %d)", ivarName, *boolPtr);
+                                    *boolPtr = YES;
+                                }
+                            }
+                            free(ctrlIvars);
+                        } else {
+                            NSLog(@"[WizardBypass] _paJFSAUJJFSAC is nil - controller not set yet");
+                        }
+                    } else {
+                        NSLog(@"[WizardBypass] _paJFSAUJJFSAC ivar not found");
+                    }
+
+                    // Also force auth on ALL other wizard obfuscated class singletons
+                    const char* wizardClasses[] = {"ABVJSMGADJS", "AJFADSHFSAJXN", "Kmsjfaigh", "Mjshjgkash", NULL};
+                    for (int wc = 0; wizardClasses[wc] != NULL; wc++) {
+                        Class wizClass = objc_getClass(wizardClasses[wc]);
+                        if (!wizClass) continue;
+
+                        // Hook all BOOL-returning CLASS methods too (+ methods)
+                        unsigned int cmCount;
+                        Method* classMethods = class_copyMethodList(object_getClass(wizClass), &cmCount);
+                        for (unsigned int cm = 0; cm < cmCount; cm++) {
+                            char* retType = method_copyReturnType(classMethods[cm]);
+                            if (retType && (retType[0] == 'c' || retType[0] == 'B')) {
+                                SEL cmSel = method_getName(classMethods[cm]);
+                                const char* cmName = sel_getName(cmSel);
+                                // Skip init/dealloc
+                                if (strncmp(cmName, "init", 4) != 0 && strcmp(cmName, "dealloc") != 0) {
+                                    NSLog(@"[WizardBypass] Hooking CLASS BOOL +%s::%s -> YES", wizardClasses[wc], cmName);
+                                    IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
+                                        return YES;
+                                    });
+                                    method_setImplementation(classMethods[cm], new_imp);
+                                }
+                            }
+                            free(retType);
+                        }
+                        free(classMethods);
+                    }
                 } else {
                     NSLog(@"[WizardBypass] Failed to create icon view");
                 }
