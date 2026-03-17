@@ -18,8 +18,9 @@
 static id g_wizardController = nil;
 static id g_wizardIcon = nil;
 
-// v29: Custom UIKit menu + full Wizard API dump. No drawInMTKView hook.
-// Only system-level hooks (UIKit, NSUserDefaults, SCLAlertView, dyld) are used.
+// v30: Fully wired UIKit menu calling real Wizard methods.
+// Buttons call ASFGAHJFAHS, MdhsaJFSAJ, paDJSAFBSANC, jsafbSAHCN, dgshdsfyewrh.
+// Runtime WBMenuHandler class for block-based button actions.
 
 // ============================================================================
 // PHASE 1: DYLD HIDING - Hide our dylib from detection
@@ -826,10 +827,10 @@ static void delayed_hook(void) {
 
     // ========================================
     // PHASE 8: CUSTOM UIKit MENU + FLOATING ICON
-    // v29: Build our own menu — no more broken Metal/imgui
+    // v30: Fully wired — buttons call real Wizard methods
     // ========================================
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] PHASE 8: CUSTOM UIKit MENU (v29)");
+    NSLog(@"[WizardBypass] PHASE 8: CUSTOM UIKit MENU (v30 — WIRED)");
     NSLog(@"[WizardBypass] ========================================");
 
     UIWindow* keyWindow = nil;
@@ -846,94 +847,256 @@ static void delayed_hook(void) {
     CGFloat screenW = keyWindow.bounds.size.width;
     CGFloat screenH = keyWindow.bounds.size.height;
 
+    // ---- CREATE RUNTIME BUTTON HANDLER CLASS ----
+    // We create a single handler object that forwards button taps to Wizard methods
+    Class handlerClass = objc_allocateClassPair([NSObject class], "WBMenuHandler", 0);
+    if (handlerClass) {
+        objc_registerClassPair(handlerClass);
+    } else {
+        handlerClass = objc_getClass("WBMenuHandler");
+    }
+    id handler = [[handlerClass alloc] init];
+
     // ---- BUILD CUSTOM UIKit MENU ----
-    // Main container: semi-transparent dark overlay
     CGFloat menuW = screenW * 0.85;
-    CGFloat menuH = screenH * 0.6;
+    CGFloat menuH = screenH * 0.7;
     CGFloat menuX = (screenW - menuW) / 2.0;
     CGFloat menuY = (screenH - menuH) / 2.0;
 
     UIView *menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuX, menuY, menuW, menuH)];
-    menuContainer.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.15 alpha:0.95];
-    menuContainer.layer.cornerRadius = 16;
+    menuContainer.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.12 alpha:0.97];
+    menuContainer.layer.cornerRadius = 18;
     menuContainer.clipsToBounds = YES;
     menuContainer.hidden = YES;
-    menuContainer.tag = 9999; // Tag for finding it later
+    menuContainer.tag = 9999;
 
-    // Title bar
-    UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, menuW, 50)];
-    titleBar.backgroundColor = [UIColor colorWithRed:0.3 green:0.1 blue:0.6 alpha:1.0];
+    // Title bar with gradient feel
+    UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, menuW, 56)];
+    titleBar.backgroundColor = [UIColor colorWithRed:0.35 green:0.1 blue:0.7 alpha:1.0];
 
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 0, menuW - 32, 50)];
-    titleLabel.text = @"Wizard Menu — v29";
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 0, menuW - 32, 56)];
+    titleLabel.text = @"\xE2\x9A\xA1 Wizard v30";
     titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    titleLabel.font = [UIFont boldSystemFontOfSize:20];
     [titleBar addSubview:titleLabel];
     [menuContainer addSubview:titleBar];
 
     // Subtitle
-    UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 54, menuW - 32, 20)];
-    subtitleLabel.text = @"Feature discovery build — check syslog for API dump";
-    subtitleLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+    UILabel *subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 60, menuW - 32, 20)];
+    subtitleLabel.text = @"Tap features to toggle ON/OFF";
+    subtitleLabel.textColor = [UIColor colorWithRed:0.5 green:0.5 blue:0.7 alpha:1.0];
     subtitleLabel.font = [UIFont systemFontOfSize:12];
     [menuContainer addSubview:subtitleLabel];
 
-    // ScrollView for feature list
-    UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 80, menuW, menuH - 80)];
+    // Section header helper block
+    void (^addSectionHeader)(UIScrollView*, CGFloat*, CGFloat, NSString*) =
+        ^(UIScrollView *sv, CGFloat *y, CGFloat w, NSString *text) {
+            UILabel *hdr = [[UILabel alloc] initWithFrame:CGRectMake(16, *y, w, 24)];
+            hdr.text = text;
+            hdr.textColor = [UIColor colorWithRed:0.6 green:0.4 blue:1.0 alpha:1.0];
+            hdr.font = [UIFont boldSystemFontOfSize:13];
+            [sv addSubview:hdr];
+            *y += 28;
+        };
+
+    // Button creation helper block
+    UIButton* (^makeButton)(UIScrollView*, CGFloat*, CGFloat, CGFloat, NSString*, NSInteger) =
+        ^UIButton*(UIScrollView *sv, CGFloat *y, CGFloat w, CGFloat h, NSString *title, NSInteger tag) {
+            UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+            btn.frame = CGRectMake(16, *y, w, h);
+            btn.backgroundColor = [UIColor colorWithRed:0.12 green:0.12 blue:0.22 alpha:1.0];
+            btn.layer.cornerRadius = 10;
+            btn.layer.borderWidth = 1.0;
+            btn.layer.borderColor = [UIColor colorWithRed:0.25 green:0.25 blue:0.4 alpha:1.0].CGColor;
+            [btn setTitle:title forState:UIControlStateNormal];
+            [btn setTitleColor:[UIColor colorWithRed:0.75 green:0.85 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
+            btn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+            btn.titleLabel.adjustsFontSizeToFitWidth = YES;
+            btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+            btn.contentEdgeInsets = UIEdgeInsetsMake(0, 14, 0, 14);
+            btn.tag = tag;
+            [sv addSubview:btn];
+            *y += h + 8;
+            return btn;
+        };
+
+    // ScrollView for features
+    UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 86, menuW, menuH - 86)];
     scrollView.showsVerticalScrollIndicator = YES;
 
-    // Create placeholder feature buttons — we'll populate with real features in v30
-    // For now, list the known Wizard methods as tappable items
-    NSArray *featureNames = @[
-        @"PADSGFNDSAHJ — Icon Setup",
-        @"IKAFHFDSAJ — Full Menu Init",
-        @"ASFGAHJFAHS — Chain Setup",
-        @"MdhsaJFSAJ — Base Setup",
-        @"paDJSAFBSANC — Menu Method 1",
-        @"jsafbSAHCN — Menu Method 2",
-        @"dgshdsfyewrh — Menu Method 3",
-        @"initializePlatform — Metal Init",
-        @"shutdownPlatform — Metal Shutdown",
-        @"handleEvent:view: — Input Forward"
-    ];
-
     CGFloat buttonY = 8;
-    CGFloat buttonH = 44;
+    CGFloat buttonH = 48;
     CGFloat buttonW = menuW - 32;
 
-    for (NSUInteger fi = 0; fi < featureNames.count; fi++) {
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-        btn.frame = CGRectMake(16, buttonY, buttonW, buttonH);
-        btn.backgroundColor = [UIColor colorWithRed:0.15 green:0.15 blue:0.25 alpha:1.0];
-        btn.layer.cornerRadius = 8;
-        [btn setTitle:featureNames[fi] forState:UIControlStateNormal];
-        [btn setTitleColor:[UIColor colorWithRed:0.7 green:0.8 blue:1.0 alpha:1.0] forState:UIControlStateNormal];
-        btn.titleLabel.font = [UIFont systemFontOfSize:14];
-        btn.titleLabel.adjustsFontSizeToFitWidth = YES;
-        btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-        btn.contentEdgeInsets = UIEdgeInsetsMake(0, 12, 0, 12);
-        btn.tag = 10000 + fi;
+    // ===== SECTION: CONTROLLER FEATURES (ABVJSMGADJS) =====
+    addSectionHeader(scrollView, &buttonY, buttonW, @"\xF0\x9F\x8E\xAE Controller Features");
 
-        // All buttons just log for now — v30 will wire real features
-        [btn addTarget:nil action:@selector(description) forControlEvents:UIControlEventTouchUpInside];
+    // Button 1: ASFGAHJFAHS (Feature #1 — likely "enable cheats" or similar)
+    UIButton *btn1 = makeButton(scrollView, &buttonY, buttonW, buttonH, @"\xE2\x9A\xA1 Feature 1 (ASFGAHJFAHS)", 10001);
+    SEL sel1 = sel_registerName("handleBtn1:");
+    IMP imp1 = imp_implementationWithBlock(^(id _self, id sender) {
+        NSLog(@"[WizardBypass] \xE2\x86\x92 Calling ASFGAHJFAHS on controller");
+        if (g_wizardController) {
+            ((void (*)(id, SEL))objc_msgSend)(g_wizardController, sel_registerName("ASFGAHJFAHS"));
+            UIButton *b = (UIButton*)sender;
+            b.backgroundColor = [UIColor colorWithRed:0.0 green:0.4 blue:0.15 alpha:1.0];
+            [b setTitle:@"\xE2\x9C\x85 Feature 1 (ASFGAHJFAHS) — CALLED" forState:UIControlStateNormal];
+            NSLog(@"[WizardBypass] ASFGAHJFAHS called successfully");
+        }
+    });
+    class_addMethod(handlerClass, sel1, imp1, "v@:@");
+    [btn1 addTarget:handler action:sel1 forControlEvents:UIControlEventTouchUpInside];
 
-        [scrollView addSubview:btn];
-        buttonY += buttonH + 8;
-    }
+    // Button 2: MdhsaJFSAJ (Feature #2)
+    UIButton *btn2 = makeButton(scrollView, &buttonY, buttonW, buttonH, @"\xE2\x9A\xA1 Feature 2 (MdhsaJFSAJ)", 10002);
+    SEL sel2 = sel_registerName("handleBtn2:");
+    IMP imp2 = imp_implementationWithBlock(^(id _self, id sender) {
+        NSLog(@"[WizardBypass] \xE2\x86\x92 Calling MdhsaJFSAJ on controller");
+        if (g_wizardController) {
+            ((void (*)(id, SEL))objc_msgSend)(g_wizardController, sel_registerName("MdhsaJFSAJ"));
+            UIButton *b = (UIButton*)sender;
+            b.backgroundColor = [UIColor colorWithRed:0.0 green:0.4 blue:0.15 alpha:1.0];
+            [b setTitle:@"\xE2\x9C\x85 Feature 2 (MdhsaJFSAJ) — CALLED" forState:UIControlStateNormal];
+            NSLog(@"[WizardBypass] MdhsaJFSAJ called successfully");
+        }
+    });
+    class_addMethod(handlerClass, sel2, imp2, "v@:@");
+    [btn2 addTarget:handler action:sel2 forControlEvents:UIControlEventTouchUpInside];
 
-    // Info label at bottom
-    UILabel *infoLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, buttonY + 4, buttonW, 40)];
-    infoLabel.text = @"Check syslog for full Wizard API dump.\nFeatures will be wired in v30.";
-    infoLabel.textColor = [UIColor colorWithWhite:0.4 alpha:1.0];
-    infoLabel.font = [UIFont systemFontOfSize:11];
-    infoLabel.numberOfLines = 2;
-    [scrollView addSubview:infoLabel];
+    // ===== SECTION: MENU VIEW FEATURES (Wksahfnasj) =====
+    addSectionHeader(scrollView, &buttonY, buttonW, @"\xF0\x9F\x93\xB1 Menu View Features");
 
-    scrollView.contentSize = CGSizeMake(menuW, buttonY + 52);
+    // Button 3: paDJSAFBSANC
+    UIButton *btn3 = makeButton(scrollView, &buttonY, buttonW, buttonH, @"\xE2\x9A\xA1 Menu Func 1 (paDJSAFBSANC)", 10003);
+    SEL sel3 = sel_registerName("handleBtn3:");
+    IMP imp3 = imp_implementationWithBlock(^(id _self, id sender) {
+        NSLog(@"[WizardBypass] \xE2\x86\x92 Calling paDJSAFBSANC on menu view");
+        if (g_wizardController) {
+            Class cls = object_getClass(g_wizardController);
+            Ivar menuIvar = class_getInstanceVariable(cls, "_jdsghadurewmf");
+            id menuView = menuIvar ? object_getIvar(g_wizardController, menuIvar) : nil;
+            if (menuView) {
+                ((void (*)(id, SEL))objc_msgSend)(menuView, sel_registerName("paDJSAFBSANC"));
+                UIButton *b = (UIButton*)sender;
+                b.backgroundColor = [UIColor colorWithRed:0.0 green:0.4 blue:0.15 alpha:1.0];
+                [b setTitle:@"\xE2\x9C\x85 Menu Func 1 — CALLED" forState:UIControlStateNormal];
+                NSLog(@"[WizardBypass] paDJSAFBSANC called successfully");
+            } else {
+                NSLog(@"[WizardBypass] ERROR: menu view (_jdsghadurewmf) is nil");
+            }
+        }
+    });
+    class_addMethod(handlerClass, sel3, imp3, "v@:@");
+    [btn3 addTarget:handler action:sel3 forControlEvents:UIControlEventTouchUpInside];
+
+    // Button 4: jsafbSAHCN
+    UIButton *btn4 = makeButton(scrollView, &buttonY, buttonW, buttonH, @"\xE2\x9A\xA1 Menu Func 2 (jsafbSAHCN)", 10004);
+    SEL sel4 = sel_registerName("handleBtn4:");
+    IMP imp4 = imp_implementationWithBlock(^(id _self, id sender) {
+        NSLog(@"[WizardBypass] \xE2\x86\x92 Calling jsafbSAHCN on menu view");
+        if (g_wizardController) {
+            Class cls = object_getClass(g_wizardController);
+            Ivar menuIvar = class_getInstanceVariable(cls, "_jdsghadurewmf");
+            id menuView = menuIvar ? object_getIvar(g_wizardController, menuIvar) : nil;
+            if (menuView) {
+                ((void (*)(id, SEL))objc_msgSend)(menuView, sel_registerName("jsafbSAHCN"));
+                UIButton *b = (UIButton*)sender;
+                b.backgroundColor = [UIColor colorWithRed:0.0 green:0.4 blue:0.15 alpha:1.0];
+                [b setTitle:@"\xE2\x9C\x85 Menu Func 2 — CALLED" forState:UIControlStateNormal];
+                NSLog(@"[WizardBypass] jsafbSAHCN called successfully");
+            } else {
+                NSLog(@"[WizardBypass] ERROR: menu view is nil");
+            }
+        }
+    });
+    class_addMethod(handlerClass, sel4, imp4, "v@:@");
+    [btn4 addTarget:handler action:sel4 forControlEvents:UIControlEventTouchUpInside];
+
+    // Button 5: dgshdsfyewrh
+    UIButton *btn5 = makeButton(scrollView, &buttonY, buttonW, buttonH, @"\xE2\x9A\xA1 Menu Func 3 (dgshdsfyewrh)", 10005);
+    SEL sel5 = sel_registerName("handleBtn5:");
+    IMP imp5 = imp_implementationWithBlock(^(id _self, id sender) {
+        NSLog(@"[WizardBypass] \xE2\x86\x92 Calling dgshdsfyewrh on menu view");
+        if (g_wizardController) {
+            Class cls = object_getClass(g_wizardController);
+            Ivar menuIvar = class_getInstanceVariable(cls, "_jdsghadurewmf");
+            id menuView = menuIvar ? object_getIvar(g_wizardController, menuIvar) : nil;
+            if (menuView) {
+                ((void (*)(id, SEL))objc_msgSend)(menuView, sel_registerName("dgshdsfyewrh"));
+                UIButton *b = (UIButton*)sender;
+                b.backgroundColor = [UIColor colorWithRed:0.0 green:0.4 blue:0.15 alpha:1.0];
+                [b setTitle:@"\xE2\x9C\x85 Menu Func 3 — CALLED" forState:UIControlStateNormal];
+                NSLog(@"[WizardBypass] dgshdsfyewrh called successfully");
+            } else {
+                NSLog(@"[WizardBypass] ERROR: menu view is nil");
+            }
+        }
+    });
+    class_addMethod(handlerClass, sel5, imp5, "v@:@");
+    [btn5 addTarget:handler action:sel5 forControlEvents:UIControlEventTouchUpInside];
+
+    // ===== SECTION: RE-INIT =====
+    addSectionHeader(scrollView, &buttonY, buttonW, @"\xF0\x9F\x94\x84 Re-Initialize");
+
+    // Button 6: Re-call PADSGFNDSAHJ + IKAFHFDSAJ (re-init)
+    UIButton *btn6 = makeButton(scrollView, &buttonY, buttonW, buttonH, @"\xF0\x9F\x94\x84 Re-Init (PADSGFNDSAHJ + IKAFHFDSAJ)", 10006);
+    SEL sel6 = sel_registerName("handleBtn6:");
+    IMP imp6 = imp_implementationWithBlock(^(id _self, id sender) {
+        NSLog(@"[WizardBypass] \xE2\x86\x92 Re-calling PADSGFNDSAHJ + IKAFHFDSAJ");
+        if (g_wizardController) {
+            ((void (*)(id, SEL))objc_msgSend)(g_wizardController, sel_registerName("PADSGFNDSAHJ"));
+            ((void (*)(id, SEL))objc_msgSend)(g_wizardController, sel_registerName("IKAFHFDSAJ"));
+            UIButton *b = (UIButton*)sender;
+            b.backgroundColor = [UIColor colorWithRed:0.0 green:0.3 blue:0.5 alpha:1.0];
+            [b setTitle:@"\xE2\x9C\x85 Re-Init — DONE" forState:UIControlStateNormal];
+            NSLog(@"[WizardBypass] Re-init complete");
+        }
+    });
+    class_addMethod(handlerClass, sel6, imp6, "v@:@");
+    [btn6 addTarget:handler action:sel6 forControlEvents:UIControlEventTouchUpInside];
+
+    // ===== SECTION: METAL RENDERER =====
+    addSectionHeader(scrollView, &buttonY, buttonW, @"\xF0\x9F\x96\xA5 Metal Renderer");
+
+    // Button 7: initializePlatform
+    UIButton *btn7 = makeButton(scrollView, &buttonY, buttonW, buttonH, @"\xF0\x9F\x96\xA5 initializePlatform", 10007);
+    SEL sel7 = sel_registerName("handleBtn7:");
+    IMP imp7 = imp_implementationWithBlock(^(id _self, id sender) {
+        NSLog(@"[WizardBypass] \xE2\x86\x92 Calling initializePlatform");
+        if (g_wizardController) {
+            Class cls = object_getClass(g_wizardController);
+            Ivar menuIvar = class_getInstanceVariable(cls, "_jdsghadurewmf");
+            id menuView = menuIvar ? object_getIvar(g_wizardController, menuIvar) : nil;
+            if (menuView) {
+                Class wksClass = object_getClass(menuView);
+                Ivar rendIvar = class_getInstanceVariable(wksClass, "_paJFSAUJJFSAC");
+                id renderer = rendIvar ? object_getIvar(menuView, rendIvar) : nil;
+                if (renderer) {
+                    ((void (*)(id, SEL))objc_msgSend)(renderer, sel_registerName("initializePlatform"));
+                    UIButton *b = (UIButton*)sender;
+                    b.backgroundColor = [UIColor colorWithRed:0.0 green:0.4 blue:0.15 alpha:1.0];
+                    [b setTitle:@"\xE2\x9C\x85 initializePlatform — CALLED" forState:UIControlStateNormal];
+                    NSLog(@"[WizardBypass] initializePlatform called");
+                } else { NSLog(@"[WizardBypass] ERROR: renderer nil"); }
+            }
+        }
+    });
+    class_addMethod(handlerClass, sel7, imp7, "v@:@");
+    [btn7 addTarget:handler action:sel7 forControlEvents:UIControlEventTouchUpInside];
+
+    // Status label
+    UILabel *statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, buttonY + 4, buttonW, 30)];
+    statusLabel.text = @"v30 — All buttons wired to real Wizard methods";
+    statusLabel.textColor = [UIColor colorWithRed:0.3 green:0.8 blue:0.3 alpha:1.0];
+    statusLabel.font = [UIFont systemFontOfSize:11];
+    statusLabel.textAlignment = NSTextAlignmentCenter;
+    [scrollView addSubview:statusLabel];
+
+    scrollView.contentSize = CGSizeMake(menuW, buttonY + 44);
     [menuContainer addSubview:scrollView];
 
     [keyWindow addSubview:menuContainer];
-    NSLog(@"[WizardBypass] Custom UIKit menu created (hidden, tag=9999)");
+    NSLog(@"[WizardBypass] Custom UIKit menu created with %d wired buttons", 7);
 
     // ---- ALSO: Still call IKAFHFDSAJ to create Wizard internals ----
     // But immediately pause MTKView and hide the Metal menu
@@ -1036,49 +1199,6 @@ static void delayed_hook(void) {
         IMP newTap = imp_implementationWithBlock(^(id self) {
             NSLog(@"[WizardBypass] TAP! Toggling custom UIKit menu");
 
-            // ONE-SHOT: Dump all Wizard classes on first tap (safe — Wizard fully init'd)
-            static BOOL didDumpAPI = NO;
-            if (!didDumpAPI) {
-                didDumpAPI = YES;
-                NSLog(@"[WizardBypass] === WIZARD API DUMP (on first tap) ===");
-                unsigned int allClassCount;
-                Class *allClasses = objc_copyClassList(&allClassCount);
-                int wizardClassCount = 0;
-                for (unsigned int ci = 0; ci < allClassCount; ci++) {
-                    const char *img = class_getImageName(allClasses[ci]);
-                    if (!img || !strstr(img, "Wizard.framework")) continue;
-                    wizardClassCount++;
-                    const char *cn = class_getName(allClasses[ci]);
-                    Class superCls = class_getSuperclass(allClasses[ci]);
-                    const char *superName = superCls ? class_getName(superCls) : "nil";
-                    NSLog(@"[WizardBypass] === CLASS: %s (super: %s) ===", cn, superName);
-                    // Ivars
-                    unsigned int ivarCount;
-                    Ivar *ivars = class_copyIvarList(allClasses[ci], &ivarCount);
-                    for (unsigned int iv = 0; iv < ivarCount; iv++) {
-                        NSLog(@"[WizardBypass]   ivar[%d] %s (%s) off=%td", iv,
-                              ivar_getName(ivars[iv]), ivar_getTypeEncoding(ivars[iv]),
-                              ivar_getOffset(ivars[iv]));
-                    }
-                    if (ivars) free(ivars);
-                    // Methods
-                    unsigned int methodCount;
-                    Method *methods = class_copyMethodList(allClasses[ci], &methodCount);
-                    for (unsigned int mi = 0; mi < methodCount; mi++) {
-                        SEL sel = method_getName(methods[mi]);
-                        char *retType = method_copyReturnType(methods[mi]);
-                        unsigned int nargs = method_getNumberOfArguments(methods[mi]);
-                        NSLog(@"[WizardBypass]   method[%d] %s ret:%s args:%u", mi,
-                              sel_getName(sel), retType, nargs);
-                        free(retType);
-                    }
-                    if (methods) free(methods);
-                }
-                free(allClasses);
-                NSLog(@"[WizardBypass] Total Wizard classes: %d", wizardClassCount);
-                NSLog(@"[WizardBypass] === END API DUMP ===");
-            }
-
             // Find our menu by tag
             UIWindow* kw = nil;
             NSArray* wins = [[UIApplication sharedApplication] windows];
@@ -1126,7 +1246,7 @@ static void delayed_hook(void) {
     [keyWindow addSubview:iconView];
     [keyWindow bringSubviewToFront:iconView];
     NSLog(@"[WizardBypass] Icon added at %@", NSStringFromCGRect(frame));
-    NSLog(@"[WizardBypass] === v29 READY — TAP ICON FOR UIKit MENU ===");
+    NSLog(@"[WizardBypass] === v30 READY — ALL BUTTONS WIRED ===");
 }
 
 // ============================================================================
