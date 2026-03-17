@@ -16,15 +16,8 @@
 static id g_wizardController = nil;
 static id g_wizardIcon = nil;
 
-// ============================================================================
-// GLOBAL: Original IMP storage for swap-and-call anti-tamper bypass
-// Strategy: temporarily restore original IMPs before calling drawInMTKView:
-// so the anti-tamper check sees unmodified methods, then re-swizzle after.
-// ============================================================================
-static IMP g_originalDrawInMTKView = NULL;   // Original drawInMTKView: IMP
-static Method g_drawMethod = NULL;            // drawInMTKView: Method object
-static IMP g_smartDrawIMP = NULL;             // Our smart wrapper IMP
-// (FramebufferDescriptor swap-and-call variables removed — no longer needed with true no-op)
+// v25: NO Wizard method hooks at all. Anti-tamper detects IMP changes on Wizard classes.
+// Only system-level hooks (UIKit, NSUserDefaults, SCLAlertView, dyld) are used.
 
 // ============================================================================
 // PHASE 1: DYLD HIDING - Hide our dylib from detection
@@ -818,100 +811,21 @@ static void delayed_hook(void) {
         SEL drawSel = NSSelectorFromString(@"drawInMTKView:");
         Method drawMethod = class_getInstanceMethod(ajfClass, drawSel);
         if (drawMethod) {
-            // Dump original IMP bytes for anti-tamper analysis (512 bytes)
             IMP originalDraw = method_getImplementation(drawMethod);
-            unsigned char *impBytes = (unsigned char *)originalDraw;
-            NSLog(@"[WizardBypass] === ORIGINAL drawInMTKView: IMP @ %p ===", originalDraw);
-            NSLog(@"[WizardBypass] === DUMPING 1024 BYTES FOR ANTI-TAMPER ANALYSIS ===");
-            for (int chunk = 0; chunk < 32; chunk++) {
-                NSMutableString *hexLine = [NSMutableString string];
-                for (int i = 0; i < 32; i++) {
-                    [hexLine appendFormat:@"%02x ", impBytes[chunk * 32 + i]];
-                }
-                NSLog(@"[WizardBypass] +%03x: %@", chunk * 32, hexLine);
-            }
-            // Scan for anti-tamper patterns in first 1024 bytes
-            for (int i = 0; i < 1020; i += 4) {
-                uint32_t instr = *(uint32_t *)(impBytes + i);
-                // MOVZ Xn, #imm16 — check all MOVZ for 0xDEAD anywhere
-                if ((instr & 0xFF800000) == 0xD2800000) {
-                    uint32_t imm16 = (instr >> 5) & 0xFFFF;
-                    if (imm16 == 0xDEAD) {
-                        NSLog(@"[WizardBypass] !!! FOUND MOVZ #0xDEAD at +%03x: %08x !!!", i, instr);
-                    }
-                }
-                // MOVK Xn, #imm16 — 0xDEAD could be loaded via MOVK
-                if ((instr & 0xFF800000) == 0xF2800000) {
-                    uint32_t imm16 = (instr >> 5) & 0xFFFF;
-                    if (imm16 == 0xDEAD) {
-                        NSLog(@"[WizardBypass] !!! FOUND MOVK #0xDEAD at +%03x: %08x !!!", i, instr);
-                    }
-                }
-                // MOV Wn, #imm16 (32-bit MOVZ) — 0x52800000
-                if ((instr & 0xFF800000) == 0x52800000) {
-                    uint32_t imm16 = (instr >> 5) & 0xFFFF;
-                    if (imm16 == 0xDEAD) {
-                        NSLog(@"[WizardBypass] !!! FOUND MOV Wn, #0xDEAD at +%03x: %08x !!!", i, instr);
-                    }
-                }
-                // BR Xn (unconditional branch to register)
-                if ((instr & 0xFFFFFC1F) == 0xD61F0000) {
-                    NSLog(@"[WizardBypass] !!! FOUND BR Xn at +%03x: %08x !!!", i, instr);
-                }
-                // BLR Xn (branch with link to register)
-                if ((instr & 0xFFFFFC1F) == 0xD63F0000) {
-                    NSLog(@"[WizardBypass] !!! FOUND BLR Xn at +%03x: %08x !!!", i, instr);
-                }
-            }
-
-            // DO NOT hook drawInMTKView here! The anti-tamper saves IMPs during
-            // initializePlatform. If we swizzle before init, it saves our hook IMP,
-            // then render check sees original≠saved → 0xDEAD.
-            // drawInMTKView hook is installed AFTER initializePlatform in its wrapper.
-            g_originalDrawInMTKView = originalDraw;
-            g_drawMethod = drawMethod;
-            NSLog(@"[WizardBypass] Saved original drawInMTKView: IMP @ %p (hook deferred until after initializePlatform)", g_originalDrawInMTKView);
+            NSLog(@"[WizardBypass] === drawInMTKView: IMP @ %p (NOT HOOKED - let anti-tamper pass) ===", originalDraw);
+            // DO NOT hook drawInMTKView - the anti-tamper detects method swizzling
+            // on Wizard classes and corrupts renderer state → PC=0 crash.
+            // Let it run natively with its original IMP untouched.
         }
 
-        // Also hook initializePlatform for safety
+        // DO NOT hook initializePlatform either - hooking ANY Wizard method
+        // triggers the anti-tamper which silently corrupts state.
+        // Let initializePlatform run natively.
         SEL initPlatSel = NSSelectorFromString(@"initializePlatform");
         Method initPlatMethod = class_getInstanceMethod(ajfClass, initPlatSel);
         if (initPlatMethod) {
-            IMP originalInitPlat = method_getImplementation(initPlatMethod);
-            IMP safeInitPlat = imp_implementationWithBlock(^(id self) {
-                NSLog(@"[WizardBypass] AJFADSHFSAJXN::initializePlatform called");
-                @try {
-                    typedef void (*InitPlatFunc)(id, SEL);
-                    ((InitPlatFunc)originalInitPlat)(self, initPlatSel);
-                    NSLog(@"[WizardBypass] initializePlatform SUCCESS");
-                } @catch (NSException *e) {
-                    NSLog(@"[WizardBypass] initializePlatform CAUGHT exception: %@", e);
-                }
-
-                // NOW hook drawInMTKView AFTER initializePlatform has saved its IMPs.
-                // This is critical: the anti-tamper saves expected IMPs during init.
-                // If we hook before init, it saves our hook = mismatch later = 0xDEAD.
-                if (g_drawMethod && g_originalDrawInMTKView && !g_smartDrawIMP) {
-                    NSLog(@"[WizardBypass] POST-INIT: Installing drawInMTKView TRUE NO-OP hook");
-                    NSLog(@"[WizardBypass] Anti-tamper inside original drawInMTKView zeroes LR→PC=0 crash");
-                    NSLog(@"[WizardBypass] Solution: never call original, UIKit controls work without Metal");
-                    static int drawCallCount = 0;
-                    IMP smartDraw = imp_implementationWithBlock(^(id selfDraw, id mtkView) {
-                        // TRUE NO-OP: Do NOT call original drawInMTKView.
-                        // The anti-tamper inside it zeroes LR before returning → PC=0 crash.
-                        // Menu UIKit elements (buttons, labels, switches) work without Metal rendering.
-                        drawCallCount++;
-                        if (drawCallCount <= 3 || drawCallCount % 600 == 0) {
-                            NSLog(@"[WizardBypass] drawInMTKView: NO-OP #%d (anti-tamper bypassed)", drawCallCount);
-                        }
-                    });
-                    g_smartDrawIMP = smartDraw;
-                    method_setImplementation(g_drawMethod, smartDraw);
-                    NSLog(@"[WizardBypass] drawInMTKView: TRUE NO-OP INSTALLED (post-initializePlatform)");
-                }
-            });
-            method_setImplementation(initPlatMethod, safeInitPlat);
-            NSLog(@"[WizardBypass] Hooked AJFADSHFSAJXN::initializePlatform (drawInMTKView hook deferred)");
+            NSLog(@"[WizardBypass] initializePlatform IMP @ %p (NOT HOOKED - anti-tamper safe)", 
+                  method_getImplementation(initPlatMethod));
         }
     } else {
         NSLog(@"[WizardBypass] WARNING: AJFADSHFSAJXN class not found for safety hooks");
