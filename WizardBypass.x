@@ -147,31 +147,30 @@ static void force_authentication(void) {
                 continue;
             }
 
-            // Only hook BOOL-returning methods (likely validation checks)
+            // Only hook BOOL-returning methods with NO arguments
+            // Methods like isEqual: take extra args — our block only accepts (id self)
+            // so hooking them causes calling convention mismatch → stack corruption → PC=0 crash
+            // Also, isEqual: returning YES breaks Metal pipeline state caching
             if (type_encoding[0] == 'c' || type_encoding[0] == 'B') {
-                NSLog(@"[WizardBypass]   Hooking BOOL: %s::%s -> YES", class_name, name);
+                // Skip methods that take arguments (contain ':')
+                // Our block is ^BOOL(id self) which only works for 0-arg methods
+                if (strchr(name, ':') != NULL) {
+                    NSLog(@"[WizardBypass]   SKIPPING BOOL with args: %s::%s (block signature mismatch)", class_name, name);
+                    free(type_encoding);
+                    continue;
+                }
 
-                // SAVE original IMP for FramebufferDescriptor::isEqual:
-                // so we can restore it during swap-and-call render
+                NSLog(@"[WizardBypass]   Hooking BOOL (no args): %s::%s -> YES", class_name, name);
+
                 IMP originalIMP = method_getImplementation(methods[j]);
 
                 IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
-                    // During rendering, let the original through
                     if (g_renderingInProgress) {
                         typedef BOOL (*OrigBoolFunc)(id, SEL);
                         return ((OrigBoolFunc)originalIMP)(self, selector);
                     }
                     return YES;
                 });
-
-                // Track FramebufferDescriptor::isEqual: specifically
-                if (strcmp(class_name, "FramebufferDescriptor") == 0 &&
-                    strcmp(name, "isEqual:") == 0) {
-                    g_fbIsEqualMethod = methods[j];
-                    g_fbIsEqualOriginal = originalIMP;
-                    g_fbIsEqualHooked = new_imp;
-                    NSLog(@"[WizardBypass]   >> Saved original isEqual: IMP @ %p for swap-and-call", originalIMP);
-                }
 
                 method_setImplementation(methods[j], new_imp);
                 hooked_methods++;
