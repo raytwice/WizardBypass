@@ -1,5 +1,5 @@
 // Wizard Authentication Bypass
-// v31: Crypto auth bypass â€” let Wizard's own UI show, hook CCCrypt/SecKey to pass any key
+// v33: C-level crypto hooks via fishhook — CCCrypt + memcmp
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -13,6 +13,7 @@
 #import <CommonCrypto/CommonCrypto.h>
 #import <Security/Security.h>
 #import <execinfo.h>
+#include "fishhook.h"
 
 // ============================================================================
 // GLOBAL: Wizard controller reference accessible from didTapIconView
@@ -506,39 +507,66 @@ static BOOL caller_is_wizard(void) {
     return NO;
 }
 
+// ---- FISHHOOK: Original function pointers ----
+static CCCryptorStatus (*orig_CCCrypt)(CCOperation op, CCAlgorithm alg, CCOptions options,
+    const void *key, size_t keyLength, const void *iv,
+    const void *dataIn, size_t dataInLength,
+    void *dataOut, size_t dataOutAvailable, size_t *dataOutMoved);
+
+static int (*orig_memcmp)(const void *s1, const void *s2, size_t n);
+
+// ---- FISHHOOK: Replacement CCCrypt ----
+// Always returns kCCSuccess so Wizard thinks decrypt/encrypt succeeded
+static CCCryptorStatus replaced_CCCrypt(CCOperation op, CCAlgorithm alg, CCOptions options,
+    const void *key, size_t keyLength, const void *iv,
+    const void *dataIn, size_t dataInLength,
+    void *dataOut, size_t dataOutAvailable, size_t *dataOutMoved) {
+
+    // Call original to get real output (needed for Wizard to process data)
+    CCCryptorStatus result = orig_CCCrypt(op, alg, options, key, keyLength, iv,
+                                          dataIn, dataInLength, dataOut, dataOutAvailable, dataOutMoved);
+
+    NSLog(@"[WizardBypass] *** CCCrypt called: op=%d alg=%d keyLen=%zu dataLen=%zu -> status=%d (FORCING kCCSuccess) ***",
+          op, alg, keyLength, dataInLength, result);
+
+    // FORCE success regardless of actual result
+    return kCCSuccess;
+}
+
+// ---- FISHHOOK: Replacement memcmp ----
+// For crypto-sized buffers (16-64 bytes), return 0 (equal)
+static int replaced_memcmp(const void *s1, const void *s2, size_t n) {
+    // Only force equal for crypto hash sizes (MD5=16, SHA1=20, SHA256=32, SHA512=64)
+    if (n >= 16 && n <= 64) {
+        int real_result = orig_memcmp(s1, s2, n);
+        if (real_result != 0) {
+            NSLog(@"[WizardBypass] *** memcmp(%zu bytes) MISMATCH -> FORCING EQUAL (crypto bypass) ***", n);
+            return 0;  // Force equal
+        }
+    }
+    return orig_memcmp(s1, s2, n);
+}
+
 static void hook_crypto_auth(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] PHASE 4F: CRYPTO AUTH BYPASS (v32)");
+    NSLog(@"[WizardBypass] PHASE 4F: CRYPTO AUTH BYPASS (v33 FISHHOOK)");
     NSLog(@"[WizardBypass] ========================================");
 
-    // ---- 1. Hook CCCrypt (CommonCrypto) ----
-    // Wizard uses this to decrypt/verify the license key locally.
-    // We intercept it: run normally but if caller is Wizard, return kCCSuccess.
-    typedef CCCryptorStatus (*CCCrypt_t)(CCOperation, CCAlgorithm, CCOptions,
-        const void*, size_t, const void*,
-        const void*, size_t, void*, size_t, size_t*);
-    CCCrypt_t orig_CCCrypt = (CCCrypt_t)dlsym(RTLD_DEFAULT, "CCCrypt");
-    if (orig_CCCrypt) {
-        // We can't replace CCCrypt directly (it's in a static lib linked into Wizard)
-        // so we hook it through NSUserDefaults interception + CCHmac scanning.
-        // Instead, hook via fishhook if available, or note for logging.
-        NSLog(@"[WizardBypass] CCCrypt found at %p (logging via caller detection)", orig_CCCrypt);
+    // ---- 1. FISHHOOK: Rebind CCCrypt ----
+    // This ACTUALLY replaces the CCCrypt function pointer in the GOT/PLT
+    // so when Wizard calls CCCrypt, our replaced_CCCrypt runs instead.
+    struct rebinding rebindings[] = {
+        {"CCCrypt", (void *)replaced_CCCrypt, (void **)&orig_CCCrypt},
+        {"memcmp", (void *)replaced_memcmp, (void **)&orig_memcmp},
+    };
+    int result = rebind_symbols(rebindings, 2);
+    NSLog(@"[WizardBypass] fishhook rebind_symbols result: %d (0=success)", result);
+    if (result == 0) {
+        NSLog(@"[WizardBypass] CCCrypt HOOKED via fishhook (all calls return kCCSuccess)");
+        NSLog(@"[WizardBypass] memcmp HOOKED via fishhook (16-64 byte comparisons forced equal)");
+    } else {
+        NSLog(@"[WizardBypass] WARNING: fishhook rebind failed!");
     }
-
-    // ---- 2. Hook SecKeyRawVerify ----
-    // If Wizard uses RSA signature verification, this will be called.
-    // We hook it to always return errSecSuccess (0).
-    typedef OSStatus (*SecKeyRawVerify_t)(SecKeyRef, SecPadding,
-        const uint8_t*, size_t, const uint8_t*, size_t);
-    SecKeyRawVerify_t orig_SecKeyRawVerify = (SecKeyRawVerify_t)dlsym(RTLD_DEFAULT, "SecKeyRawVerify");
-    if (orig_SecKeyRawVerify) {
-        NSLog(@"[WizardBypass] SecKeyRawVerify found â€” hooking via Wizard BOOL methods");
-    }
-
-    // ---- 3. Hook SecKeyVerifySignature (modern API) ----
-    NSLog(@"[WizardBypass] Checking SecKeyVerifySignature...");
-    void *secVerify = dlsym(RTLD_DEFAULT, "SecKeyVerifySignature");
-    NSLog(@"[WizardBypass] SecKeyVerifySignature: %p", secVerify);
 
     // ---- 4. Key insight: Wizard stores auth result locally. ----
     // The BOOL-returning methods we already hook (returning YES for all Wizard BOOLs)

@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 # Build WizardBypass as a TWEAK (dylib type 6), not a library
 TWEAK_NAME = WizardBypass
 
-WizardBypass_FILES = WizardBypass.x
+WizardBypass_FILES = WizardBypass.x fishhook.c
 WizardBypass_CFLAGS = -fobjc-arc -fno-objc-arc-exceptions
 WizardBypass_LDFLAGS = -lobjc -framework Foundation -framework UIKit
 WizardBypass_INSTALL_PATH = /Library/MobileSubstrate/DynamicLibraries
