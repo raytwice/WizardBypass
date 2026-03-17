@@ -741,7 +741,6 @@ static void hook_idle_timeout_kill(void) {
         SEL hideViewSel = NSSelectorFromString(@"hideView");
         Method hideViewMethod = class_getInstanceMethod(sclClass, hideViewSel);
         if (hideViewMethod) {
-            IMP origHide = method_getImplementation(hideViewMethod);
             IMP newHide = imp_implementationWithBlock(^(id self) {
                 NSLog(@"[WizardBypass] *** SCLAlertView::hideView called — BLOCKING (prevents timeout dismiss) ***");
                 // Don't call original — prevents the dismiss-triggered auth timeout
