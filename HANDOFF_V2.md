@@ -1,9 +1,9 @@
 ================================================================================
 WIZARD BYPASS PROJECT - HANDOFF DOCUMENT V2
 ================================================================================
-Last Updated: 2026-03-17
-Status: Icon visible + tappable, no crash, but menu doesn't appear on tap
-Build: commit 2128ec5 (diagnostic build with ABVJSMGADJS wiring)
+Last Updated: 2026-03-17 01:27 UTC
+Status: Icon visible + tappable, menu created but 0xDEAD anti-tamper crash on render
+Build: commit 97b6ec8 (anti-tamper no-op + diagnostics)
 
 ================================================================================
 THE PROBLEM
@@ -11,21 +11,33 @@ THE PROBLEM
 
 CURRENT ISSUE:
 --------------
-The purple Wizard icon appears on screen and is tappable. Tapping it calls the
-original `didTapIconView` which runs and RETURNS without crashing — but nothing
-happens. No menu appears. The auth bypass is not sufficient because the
-underlying class wiring is wrong.
+Menu is successfully created by IKAFHFDSAJ. Tapping the icon unhides Wksahfnasj
+and unpauses its MTKView. However, the original drawInMTKView: on AJFADSHFSAJXN
+contains ANTI-TAMPER checks that detect our method swizzling and deliberately
+crash with PC=0xDEAD. This is NOT a nil-pointer crash.
 
-ROOT CAUSE (CONFIRMED VIA RUNTIME):
-------------------------------------
-1. `Pajdsakdfj` has **0 ivars** — it's a bare UIView with just 2 methods
-2. `didTapIconView` accesses the ABVJSMGADJS controller via an **unknown
-   mechanism** (NOT an ivar). Likely: global/static C variable, associated
-   object, or singleton pattern.
-3. Our manually created Pajdsakdfj icon has no link to any controller, so
-   `didTapIconView` finds nothing and does nothing.
-4. ABVJSMGADJS has NO BOOL ivars — only 7 object ivars. Our BOOL-hooking
-   strategy was completely ineffective (only hooked FramebufferDescriptor::isEqual:).
+ROOT CAUSE (CONFIRMED VIA RUNTIME v18):
+-----------------------------------------
+1. IKAFHFDSAJ successfully creates: UITextFields, MTKView, Wksahfnasj, 4x Pajdsakdfj
+2. Wksahfnasj ivars after creation:
+     tsjfhasjfsa  (^v)              = 0x283b9ab00  ← render callback (NOT nil!)
+     _pPfuasjrasfh (@"MTKView")     = <MTKView>    ← Metal view
+     _paJFSAUJJFSAC (@"AJFADSHFSAJXN") = <AJFADSHFSAJXN> ← renderer
+3. initializePlatform runs SUCCESS — Metal pipeline is ready
+4. When MTKView is unpaused → drawInMTKView: fires → anti-tamper check inside
+   detects swizzled methods → jumps to 0xDEAD → crash
+5. @try/@catch CANNOT catch 0xDEAD (it's EXC_BAD_ACCESS, not NSException)
+
+FIX (commit 97b6ec8):
+   Replace drawInMTKView: with complete NO-OP — never call original.
+   This prevents the anti-tamper code from executing entirely.
+   Menu won't render imgui content, but app survives.
+
+PRIOR ISSUES (SOLVED):
+-----------------------
+✓ Pajdsakdfj has 0 ivars → solved via g_wizardController global
+✓ Menu not created → solved by calling IKAFHFDSAJ on ABVJSMGADJS
+✓ Startup crash → solved by pausing MTKView after menu creation
 
 ================================================================================
 RUNTIME-VERIFIED CLASS STRUCTURE
