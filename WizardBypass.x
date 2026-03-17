@@ -812,54 +812,60 @@ static void delayed_hook(void) {
             NSLog(@"[WizardBypass] === drawInMTKView: IMP @ %p ===", originalDraw);
 
             // ================================================================
-            // MEMORY PATCH: Skip anti-tamper integrity check in drawInMTKView
+            // FLAG-PRESET APPROACH: Set anti-tamper flag to 1 before rendering
             // ================================================================
-            // The anti-tamper at drawInMTKView+0x28 is:
-            //   CBNZ W9, +0x9C  (0x350004e9)
-            // If flag is set: skip check. If not: run XOR integrity check.
-            // The XOR check detects our dylib and zeroes all regs → PC=0 crash.
-            // FIX: Patch CBNZ to unconditional B → always skip the check.
-            //   B +0x27  (0x14000027) — jumps to offset +0xC4 (past check)
+            // Code patching fails (SIGBUS - code signing enforcement).
+            // Instead, decode the flag address from ADRP+ADD at +0x1C/+0x20,
+            // then hook drawInMTKView to pre-set the flag to 1 BEFORE calling
+            // original. The CBNZ at +0x28 sees flag!=0 → skips integrity check.
             // ================================================================
 
             unsigned char *impPtr = (unsigned char *)originalDraw;
-            uint32_t *patchAddr = (uint32_t *)(impPtr + 0x28);
-            uint32_t currentInstr = *patchAddr;
+            uint32_t adrpInstr = *(uint32_t *)(impPtr + 0x1C);
+            uint32_t addInstr  = *(uint32_t *)(impPtr + 0x20);
 
-            NSLog(@"[WizardBypass] drawInMTKView+0x28 current: 0x%08x (expected CBNZ: 0x350004e9)", currentInstr);
+            NSLog(@"[WizardBypass] ADRP @ +0x1C: 0x%08x", adrpInstr);
+            NSLog(@"[WizardBypass] ADD  @ +0x20: 0x%08x", addInstr);
 
-            if (currentInstr == 0x350004e9) {
-                // Found the CBNZ — patch it to unconditional B
-                uint32_t patchInstr = 0x14000027; // B +0x9C (same offset as CBNZ target)
+            // Decode ADRP Xd, #page_offset
+            // ADRP encoding: 1 | immlo(2) | 10000 | immhi(19) | Rd(5)
+            uint32_t adrp_immlo = (adrpInstr >> 29) & 0x3;
+            uint32_t adrp_immhi = (adrpInstr >> 5) & 0x7FFFF;
+            int64_t adrp_imm = (int64_t)(((uint64_t)adrp_immhi << 2) | adrp_immlo);
+            // Sign-extend from 21 bits
+            if (adrp_imm & (1LL << 20)) adrp_imm |= ~((1LL << 21) - 1);
+            uint64_t adrpPC = ((uint64_t)impPtr + 0x1C) & ~0xFFFULL; // PC page-aligned
+            uint64_t adrpResult = adrpPC + (adrp_imm << 12);
 
-                // Make page writable
-                vm_address_t pageAddr = (vm_address_t)patchAddr & ~(vm_page_size - 1);
-                kern_return_t kr = vm_protect(mach_task_self(), pageAddr, vm_page_size,
-                                              false, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+            // Decode ADD Xd, Xn, #imm12
+            // ADD encoding: sf(1) | 00 | 10001 | sh(1) | imm12(12) | Rn(5) | Rd(5)
+            uint32_t add_imm12 = (addInstr >> 10) & 0xFFF;
+            uint32_t add_shift = (addInstr >> 22) & 0x1;
+            uint64_t addResult = adrpResult + (add_shift ? (add_imm12 << 12) : add_imm12);
 
-                if (kr == KERN_SUCCESS) {
-                    NSLog(@"[WizardBypass] vm_protect RWX success");
+            NSLog(@"[WizardBypass] Anti-tamper flag address: %p", (void *)addResult);
 
-                    // Write the patch
-                    *patchAddr = patchInstr;
-                    NSLog(@"[WizardBypass] PATCHED drawInMTKView+0x28: 0x350004e9 → 0x14000027 (CBNZ → B)");
+            // Verify we can read the flag
+            __block volatile uint8_t *flagPtr = (volatile uint8_t *)addResult;
+            uint8_t flagValue = *flagPtr;
+            NSLog(@"[WizardBypass] Flag current value: %d (0=check pending, 1=check passed)", flagValue);
 
-                    // Flush instruction cache
-                    sys_icache_invalidate((void *)patchAddr, 4);
-                    NSLog(@"[WizardBypass] Instruction cache flushed");
+            // Pre-set the flag to 1 NOW
+            *flagPtr = 1;
+            NSLog(@"[WizardBypass] Flag PRE-SET to 1 (integrity check will be skipped)");
 
-                    // Restore page to RX (no write)
-                    vm_protect(mach_task_self(), pageAddr, vm_page_size,
-                               false, VM_PROT_READ | VM_PROT_EXECUTE);
-                    NSLog(@"[WizardBypass] vm_protect restored to RX");
-                    NSLog(@"[WizardBypass] >>> ANTI-TAMPER PATCHED — drawInMTKView integrity check DISABLED <<<");
-                } else {
-                    NSLog(@"[WizardBypass] vm_protect FAILED: %d — cannot patch anti-tamper", kr);
-                }
-            } else {
-                NSLog(@"[WizardBypass] WARNING: Expected CBNZ (0x350004e9) at +0x28 but got 0x%08x", currentInstr);
-                NSLog(@"[WizardBypass] Anti-tamper layout may have changed — cannot patch");
-            }
+            // Also hook drawInMTKView to ensure flag stays 1 on every call
+            __block IMP origDrawIMP = originalDraw;
+            IMP flagPresetDraw = imp_implementationWithBlock(^(id selfDraw, id mtkView) {
+                // Ensure flag is always 1 before the original runs
+                *flagPtr = 1;
+                // Call original drawInMTKView — CBNZ sees flag=1, skips check
+                typedef void (*DrawFunc)(id, SEL, id);
+                ((DrawFunc)origDrawIMP)(selfDraw, @selector(drawInMTKView:), mtkView);
+            });
+            method_setImplementation(drawMethod, flagPresetDraw);
+            NSLog(@"[WizardBypass] drawInMTKView HOOKED with flag-preset wrapper");
+            NSLog(@"[WizardBypass] >>> ANTI-TAMPER BYPASSED — flag pre-set to skip integrity check <<<");
         }
 
         // Log initializePlatform (not hooked, runs natively)
