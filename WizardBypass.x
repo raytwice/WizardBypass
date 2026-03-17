@@ -572,18 +572,26 @@ static void hook_crypto_auth(void) {
     NSLog(@"[WizardBypass] PHASE 4F: CRYPTO HOOKS (v35 DIAGNOSTIC)");
     NSLog(@"[WizardBypass] ========================================");
 
-    struct rebinding rebindings[] = {
-        {"CCCrypt", (void *)replaced_CCCrypt, (void **)&orig_CCCrypt},
-        {"memcmp", (void *)replaced_memcmp, (void **)&orig_memcmp},
-        {"CC_SHA256", (void *)replaced_CC_SHA256, (void **)&orig_CC_SHA256},
-        {"CC_MD5", (void *)replaced_CC_MD5, (void **)&orig_CC_MD5},
-    };
-    int result = rebind_symbols(rebindings, 4);
-    NSLog(@"[WizardBypass] fishhook rebind_symbols result: %d (0=success)", result);
-    if (result == 0) {
-        NSLog(@"[WizardBypass] Hooked: CCCrypt(log) memcmp CC_SHA256 CC_MD5");
+    // CRITICAL: Only rebind ONCE — second call would overwrite orig_ pointers
+    // with our own hooks, causing infinite recursion!
+    static BOOL already_rebound = NO;
+    if (!already_rebound) {
+        struct rebinding rebindings[] = {
+            {"CCCrypt", (void *)replaced_CCCrypt, (void **)&orig_CCCrypt},
+            {"memcmp", (void *)replaced_memcmp, (void **)&orig_memcmp},
+            {"CC_SHA256", (void *)replaced_CC_SHA256, (void **)&orig_CC_SHA256},
+            {"CC_MD5", (void *)replaced_CC_MD5, (void **)&orig_CC_MD5},
+        };
+        int result = rebind_symbols(rebindings, 4);
+        NSLog(@"[WizardBypass] fishhook rebind_symbols result: %d (0=success)", result);
+        if (result == 0) {
+            NSLog(@"[WizardBypass] Hooked: CCCrypt(log) memcmp CC_SHA256 CC_MD5");
+        } else {
+            NSLog(@"[WizardBypass] WARNING: fishhook rebind failed!");
+        }
+        already_rebound = YES;
     } else {
-        NSLog(@"[WizardBypass] WARNING: fishhook rebind failed!");
+        NSLog(@"[WizardBypass] fishhook already active, skipping rebind");
     }
 
     // ---- 4. Key insight: Wizard stores auth result locally. ----
