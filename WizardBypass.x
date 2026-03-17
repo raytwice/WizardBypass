@@ -895,43 +895,22 @@ static void delayed_hook(void) {
                 // This is critical: the anti-tamper saves expected IMPs during init.
                 // If we hook before init, it saves our hook = mismatch later = 0xDEAD.
                 if (g_drawMethod && g_originalDrawInMTKView && !g_smartDrawIMP) {
-                    NSLog(@"[WizardBypass] POST-INIT: Now installing drawInMTKView swap-and-call hook");
+                    NSLog(@"[WizardBypass] POST-INIT: Installing drawInMTKView TRUE NO-OP hook");
+                    NSLog(@"[WizardBypass] Anti-tamper inside original drawInMTKView zeroes LR→PC=0 crash");
+                    NSLog(@"[WizardBypass] Solution: never call original, UIKit controls work without Metal");
                     static int drawCallCount = 0;
                     IMP smartDraw = imp_implementationWithBlock(^(id selfDraw, id mtkView) {
-                        if (!g_originalDrawInMTKView || !g_drawMethod) return;
-
-                        // Restore original IMP on Method so anti-tamper check passes
-                        method_setImplementation(g_drawMethod, g_originalDrawInMTKView);
-
-                        // Also restore FramebufferDescriptor::isEqual:
-                        if (g_fbIsEqualMethod && g_fbIsEqualOriginal) {
-                            method_setImplementation(g_fbIsEqualMethod, g_fbIsEqualOriginal);
-                        }
-
-                        g_renderingInProgress = YES;
-
-                        // Call ORIGINAL drawInMTKView — anti-tamper sees all original IMPs
-                        typedef void (*DrawFunc)(id, SEL, id);
-                        ((DrawFunc)g_originalDrawInMTKView)(selfDraw, @selector(drawInMTKView:), mtkView);
-
-                        g_renderingInProgress = NO;
-
-                        // Re-install our hooks
-                        if (g_smartDrawIMP) {
-                            method_setImplementation(g_drawMethod, g_smartDrawIMP);
-                        }
-                        if (g_fbIsEqualMethod && g_fbIsEqualHooked) {
-                            method_setImplementation(g_fbIsEqualMethod, g_fbIsEqualHooked);
-                        }
-
+                        // TRUE NO-OP: Do NOT call original drawInMTKView.
+                        // The anti-tamper inside it zeroes LR before returning → PC=0 crash.
+                        // Menu UIKit elements (buttons, labels, switches) work without Metal rendering.
                         drawCallCount++;
-                        if (drawCallCount <= 5 || drawCallCount % 300 == 0) {
-                            NSLog(@"[WizardBypass] drawInMTKView: POST-INIT SWAP #%d SURVIVED!", drawCallCount);
+                        if (drawCallCount <= 3 || drawCallCount % 600 == 0) {
+                            NSLog(@"[WizardBypass] drawInMTKView: NO-OP #%d (anti-tamper bypassed)", drawCallCount);
                         }
                     });
                     g_smartDrawIMP = smartDraw;
                     method_setImplementation(g_drawMethod, smartDraw);
-                    NSLog(@"[WizardBypass] drawInMTKView: DEFERRED HOOK INSTALLED (post-initializePlatform)");
+                    NSLog(@"[WizardBypass] drawInMTKView: TRUE NO-OP INSTALLED (post-initializePlatform)");
                 }
             });
             method_setImplementation(initPlatMethod, safeInitPlat);
