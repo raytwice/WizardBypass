@@ -836,12 +836,10 @@ static void delayed_hook(void) {
                         NSLog(@"[WizardBypass] Set menu on controller");
                     }
 
-                    // Also set the controller ref on menu (paJFSAUJJFSAC ivar)
-                    Class ajfClass = objc_getClass("AJFADSHFSAJXN");
+                    // Also check the paJFSAUJJFSAC ivar (expects AJFADSHFSAJXN Metal renderer)
                     Ivar menuCtrlIvar = class_getInstanceVariable(menuClass, "_paJFSAUJJFSAC");
                     if (menuCtrlIvar) {
-                        NSLog(@"[WizardBypass] Wksahfnasj has _paJFSAUJJFSAC ivar");
-                        // It expects AJFADSHFSAJXN, not ABVJSMGADJS
+                        NSLog(@"[WizardBypass] Wksahfnasj has _paJFSAUJJFSAC ivar (AJFADSHFSAJXN slot)");
                     }
 
                     // Dump Wksahfnasj ivars to see what it has
