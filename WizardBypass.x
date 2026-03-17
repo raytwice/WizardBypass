@@ -513,9 +513,9 @@ static CCCryptorStatus (*orig_CCCrypt)(CCOperation op, CCAlgorithm alg, CCOption
     const void *dataIn, size_t dataInLength,
     void *dataOut, size_t dataOutAvailable, size_t *dataOutMoved);
 static int (*orig_memcmp)(const void *s1, const void *s2, size_t n);
-static int (*orig_strcmp)(const char *s1, const char *s2);
 static unsigned char *(*orig_CC_SHA256)(const void *data, uint32_t len, unsigned char *md);
 static unsigned char *(*orig_CC_MD5)(const void *data, uint32_t len, unsigned char *md);
+static _Atomic int g_in_hash_hook = 0; // re-entrancy guard
 
 // ---- FISHHOOK: Replacement CCCrypt ----
 // v35: LOG ONLY, do NOT force success (was corrupting 6MB game assets!)
@@ -543,24 +543,15 @@ static int replaced_memcmp(const void *s1, const void *s2, size_t n) {
 }
 
 // ---- FISHHOOK: Replacement strcmp ----
-// Catches C-level string comparisons that Wizard might use for key validation
-static int replaced_strcmp(const char *s1, const char *s2) {
-    int result = orig_strcmp(s1, s2);
-    if (caller_is_wizard() && s1 && s2) {
-        size_t l1 = strlen(s1);
-        size_t l2 = strlen(s2);
-        if (l1 > 3 && l1 < 200 && l2 > 3 && l2 < 200) {
-            NSLog(@"[WizardBypass] *** Wizard strcmp: '%s' vs '%s' -> %d ***", s1, s2, result);
-        }
-    }
-    return result;
-}
+// NOTE: strcmp hook REMOVED — causes infinite recursion (backtrace() calls strcmp internally)
 
 // ---- FISHHOOK: Replacement CC_SHA256 ----
 static unsigned char *replaced_CC_SHA256(const void *data, uint32_t len, unsigned char *md) {
     unsigned char *result = orig_CC_SHA256(data, len, md);
-    if (caller_is_wizard()) {
-        NSLog(@"[WizardBypass] *** Wizard CC_SHA256 called: dataLen=%u ***", len);
+    if (!g_in_hash_hook) {
+        g_in_hash_hook = 1;
+        NSLog(@"[WizardBypass] CC_SHA256 called: dataLen=%u", len);
+        g_in_hash_hook = 0;
     }
     return result;
 }
@@ -568,8 +559,10 @@ static unsigned char *replaced_CC_SHA256(const void *data, uint32_t len, unsigne
 // ---- FISHHOOK: Replacement CC_MD5 ----
 static unsigned char *replaced_CC_MD5(const void *data, uint32_t len, unsigned char *md) {
     unsigned char *result = orig_CC_MD5(data, len, md);
-    if (caller_is_wizard()) {
-        NSLog(@"[WizardBypass] *** Wizard CC_MD5 called: dataLen=%u ***", len);
+    if (!g_in_hash_hook) {
+        g_in_hash_hook = 1;
+        NSLog(@"[WizardBypass] CC_MD5 called: dataLen=%u", len);
+        g_in_hash_hook = 0;
     }
     return result;
 }
@@ -582,14 +575,13 @@ static void hook_crypto_auth(void) {
     struct rebinding rebindings[] = {
         {"CCCrypt", (void *)replaced_CCCrypt, (void **)&orig_CCCrypt},
         {"memcmp", (void *)replaced_memcmp, (void **)&orig_memcmp},
-        {"strcmp", (void *)replaced_strcmp, (void **)&orig_strcmp},
         {"CC_SHA256", (void *)replaced_CC_SHA256, (void **)&orig_CC_SHA256},
         {"CC_MD5", (void *)replaced_CC_MD5, (void **)&orig_CC_MD5},
     };
-    int result = rebind_symbols(rebindings, 5);
+    int result = rebind_symbols(rebindings, 4);
     NSLog(@"[WizardBypass] fishhook rebind_symbols result: %d (0=success)", result);
     if (result == 0) {
-        NSLog(@"[WizardBypass] Hooked: CCCrypt(log-only) memcmp strcmp CC_SHA256 CC_MD5");
+        NSLog(@"[WizardBypass] Hooked: CCCrypt(log) memcmp CC_SHA256 CC_MD5");
     } else {
         NSLog(@"[WizardBypass] WARNING: fishhook rebind failed!");
     }
