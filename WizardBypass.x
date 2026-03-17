@@ -22,10 +22,12 @@ static id g_wizardIcon = nil;
 // so the anti-tamper check sees unmodified methods, then re-swizzle after.
 // ============================================================================
 static IMP g_originalDrawInMTKView = NULL;   // Original drawInMTKView: IMP
-static Method g_fbIsEqualMethod = NULL;      // FramebufferDescriptor::isEqual: method
-static IMP g_fbIsEqualOriginal = NULL;       // Original isEqual: IMP
-static IMP g_fbIsEqualHooked = NULL;         // Our hooked isEqual: IMP
-static BOOL g_renderingInProgress = NO;      // Reentrancy guard
+static Method g_drawMethod = NULL;            // drawInMTKView: Method object
+static IMP g_smartDrawIMP = NULL;             // Our smart wrapper IMP
+static Method g_fbIsEqualMethod = NULL;       // FramebufferDescriptor::isEqual: method
+static IMP g_fbIsEqualOriginal = NULL;        // Original isEqual: IMP
+static IMP g_fbIsEqualHooked = NULL;          // Our hooked isEqual: IMP
+static BOOL g_renderingInProgress = NO;       // Reentrancy guard
 
 // ============================================================================
 // PHASE 1: DYLD HIDING - Hide our dylib from detection
@@ -866,34 +868,60 @@ static void delayed_hook(void) {
                 }
             }
 
-            // Save original drawInMTKView: IMP for swap-and-call
+            // Save original drawInMTKView: IMP and Method for swap-and-call
             g_originalDrawInMTKView = originalDraw;
-            NSLog(@"[WizardBypass] Saved original drawInMTKView: IMP @ %p", g_originalDrawInMTKView);
+            g_drawMethod = drawMethod;
+            NSLog(@"[WizardBypass] Saved original drawInMTKView: IMP @ %p, Method @ %p", g_originalDrawInMTKView, g_drawMethod);
 
-            // SWAP-AND-CALL: Instead of no-op, we call the original drawInMTKView:
-            // but set g_renderingInProgress=YES so our BOOL hooks pass through
-            // to originals during the anti-tamper check.
+            // FULL SWAP-AND-CALL v3:
+            // The anti-tamper inside drawInMTKView checks method_getImplementation()
+            // on its OWN method. If it sees our swizzled IMP, it jumps to 0xDEAD.
+            // Fix: TEMPORARILY restore the original IMP on the Method object itself,
+            // call the original, then re-install our hook.
             static int drawCallCount = 0;
             IMP smartDraw = imp_implementationWithBlock(^(id self, id mtkView) {
-                if (!g_originalDrawInMTKView) return;
+                if (!g_originalDrawInMTKView || !g_drawMethod) return;
 
-                // Set flag so all hooked BOOL methods return their ORIGINAL
-                // values during the render call (anti-tamper checks original IMPs)
+                // STEP 1: Restore original IMP on the Method object
+                // so method_getImplementation(drawInMTKView:) returns the original
+                method_setImplementation(g_drawMethod, g_originalDrawInMTKView);
+
+                // STEP 2: Also restore FramebufferDescriptor::isEqual: original
+                if (g_fbIsEqualMethod && g_fbIsEqualOriginal) {
+                    method_setImplementation(g_fbIsEqualMethod, g_fbIsEqualOriginal);
+                }
+
+                // STEP 3: Set rendering flag for any other hooks
                 g_renderingInProgress = YES;
 
-                // Call the ORIGINAL drawInMTKView:
+                // STEP 4: Call the ORIGINAL drawInMTKView:
+                // Now the runtime looks completely unmodified
                 typedef void (*DrawFunc)(id, SEL, id);
-                ((DrawFunc)g_originalDrawInMTKView)(self, drawSel, mtkView);
+                ((DrawFunc)g_originalDrawInMTKView)(self, @selector(drawInMTKView:), mtkView);
 
+                // STEP 5: Restore our hooks
                 g_renderingInProgress = NO;
 
+                // Re-install our smart wrapper on drawInMTKView:
+                if (g_smartDrawIMP) {
+                    method_setImplementation(g_drawMethod, g_smartDrawIMP);
+                }
+
+                // Re-install our hooked isEqual:
+                if (g_fbIsEqualMethod && g_fbIsEqualHooked) {
+                    method_setImplementation(g_fbIsEqualMethod, g_fbIsEqualHooked);
+                }
+
                 drawCallCount++;
-                if (drawCallCount <= 3 || drawCallCount % 300 == 0) {
-                    NSLog(@"[WizardBypass] drawInMTKView: swap-and-call #%d SURVIVED!", drawCallCount);
+                if (drawCallCount <= 5 || drawCallCount % 300 == 0) {
+                    NSLog(@"[WizardBypass] drawInMTKView: FULL SWAP #%d SURVIVED!", drawCallCount);
                 }
             });
+
+            // Save reference to our smart draw IMP so we can re-install it
+            g_smartDrawIMP = smartDraw;
             method_setImplementation(drawMethod, smartDraw);
-            NSLog(@"[WizardBypass] drawInMTKView: replaced with SWAP-AND-CALL (anti-tamper bypass v2)");
+            NSLog(@"[WizardBypass] drawInMTKView: replaced with FULL-SWAP-AND-CALL v3");
         }
 
         // Also hook initializePlatform for safety
