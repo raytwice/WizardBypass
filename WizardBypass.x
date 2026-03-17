@@ -152,13 +152,8 @@ static void force_authentication(void) {
 
                 NSLog(@"[WizardBypass]   Hooking BOOL (no args): %s::%s -> YES", class_name, name);
 
-                IMP originalIMP = method_getImplementation(methods[j]);
 
                 IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
-                    if (g_renderingInProgress) {
-                        typedef BOOL (*OrigBoolFunc)(id, SEL);
-                        return ((OrigBoolFunc)originalIMP)(self, selector);
-                    }
                     return YES;
                 });
 
