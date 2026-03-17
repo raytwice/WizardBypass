@@ -1,4 +1,4 @@
-﻿// Wizard Authentication Bypass
+// Wizard Authentication Bypass
 // v31: Crypto auth bypass â€” let Wizard's own UI show, hook CCCrypt/SecKey to pass any key
 
 #import <UIKit/UIKit.h>
