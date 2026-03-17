@@ -10,6 +10,13 @@
 #import <QuartzCore/QuartzCore.h>
 
 // ============================================================================
+// GLOBAL: Wizard controller reference accessible from didTapIconView
+// Since Pajdsakdfj has 0 ivars, we use a global to bridge the gap
+// ============================================================================
+static id g_wizardController = nil;
+static id g_wizardIcon = nil;
+
+// ============================================================================
 // PHASE 1: DYLD HIDING - Hide our dylib from detection
 // ============================================================================
 
@@ -624,90 +631,29 @@ static void delayed_hook(void) {
 
     // ========================================
     // PHASE 7: HOOK ABVJSMGADJS - THE REAL CONTROLLER
-    // ABVJSMGADJS owns: 4 Pajdsakdfj icons + 1 Wksahfnasj menu + 2 NSTimers
-    // Its 4 obfuscated methods (PADSGFNDSAHJ, IKAFHFDSAJ, ASFGAHJFAHS, MdhsaJFSAJ) likely control auth
+    // Now we know: ABVJSMGADJS has 7 object ivars (no BOOLs), 4 void methods
+    // Pajdsakdfj has 0 ivars — didTapIconView uses unknown mechanism
+    // Solution: use global g_wizardController + fully replace didTapIconView
     // ========================================
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] PHASE 7: HOOKING ABVJSMGADJS (REAL CONTROLLER)");
+    NSLog(@"[WizardBypass] PHASE 7: SETTING UP ABVJSMGADJS CONTROLLER");
     NSLog(@"[WizardBypass] ========================================");
 
     Class abvjsmgadjs_class = objc_getClass("ABVJSMGADJS");
-    if (abvjsmgadjs_class) {
-        NSLog(@"[WizardBypass] Found ABVJSMGADJS class!");
-
-        // Dump ALL ivars to understand the structure
-        unsigned int ivarCount;
-        Ivar *ivars = class_copyIvarList(abvjsmgadjs_class, &ivarCount);
-        NSLog(@"[WizardBypass] ABVJSMGADJS has %d ivars:", ivarCount);
-        for (unsigned int i = 0; i < ivarCount; i++) {
-            const char *name = ivar_getName(ivars[i]);
-            const char *type = ivar_getTypeEncoding(ivars[i]);
-            NSLog(@"[WizardBypass]   ivar[%d]: %s (type: %s)", i, name, type);
-        }
-        free(ivars);
-
-        // Hook the 4 obfuscated methods to LOG what they do
-        const char* methodNames[] = {"PADSGFNDSAHJ", "IKAFHFDSAJ", "ASFGAHJFAHS", "MdhsaJFSAJ", NULL};
-        for (int m = 0; methodNames[m] != NULL; m++) {
-            SEL methodSel = sel_registerName(methodNames[m]);
-            Method method = class_getInstanceMethod(abvjsmgadjs_class, methodSel);
-            if (method) {
-                char *retType = method_copyReturnType(method);
-                unsigned int argCount = method_getNumberOfArguments(method);
-                NSLog(@"[WizardBypass] ABVJSMGADJS::%s -> retType=%s, argCount=%d", methodNames[m], retType, argCount);
-
-                // Get full type encoding
-                const char *typeEncoding = method_getTypeEncoding(method);
-                NSLog(@"[WizardBypass]   Full encoding: %s", typeEncoding);
-
-                IMP originalIMP = method_getImplementation(method);
-                const char *capturedName = methodNames[m];
-
-                // Hook based on return type
-                if (retType[0] == 'v') {
-                    // void return - hook to log and call original
-                    IMP newIMP = imp_implementationWithBlock(^(id self) {
-                        NSLog(@"[WizardBypass] *** CALLED: ABVJSMGADJS::%s (void) ***", capturedName);
-                        typedef void (*OrigFunc)(id, SEL);
-                        ((OrigFunc)originalIMP)(self, methodSel);
-                        NSLog(@"[WizardBypass] *** RETURNED: ABVJSMGADJS::%s ***", capturedName);
-                    });
-                    method_setImplementation(method, newIMP);
-                } else if (retType[0] == '@') {
-                    // id return - hook to log and call original
-                    IMP newIMP = imp_implementationWithBlock(^id(id self) {
-                        NSLog(@"[WizardBypass] *** CALLED: ABVJSMGADJS::%s (id) ***", capturedName);
-                        typedef id (*OrigFunc)(id, SEL);
-                        id result = ((OrigFunc)originalIMP)(self, methodSel);
-                        NSLog(@"[WizardBypass] *** RETURNED: ABVJSMGADJS::%s -> %@ ***", capturedName, result);
-                        return result;
-                    });
-                    method_setImplementation(method, newIMP);
-                } else if (retType[0] == 'c' || retType[0] == 'B') {
-                    // BOOL return - force YES
-                    IMP newIMP = imp_implementationWithBlock(^BOOL(id self) {
-                        NSLog(@"[WizardBypass] *** CALLED: ABVJSMGADJS::%s (BOOL) -> forcing YES ***", capturedName);
-                        return YES;
-                    });
-                    method_setImplementation(method, newIMP);
-                } else {
-                    NSLog(@"[WizardBypass] Unknown return type '%s' for %s, skipping hook", retType, capturedName);
-                }
-
-                free(retType);
-            } else {
-                NSLog(@"[WizardBypass] ABVJSMGADJS::%s NOT FOUND as instance method", methodNames[m]);
-            }
-        }
-    } else {
-        NSLog(@"[WizardBypass] ABVJSMGADJS class NOT FOUND!");
+    if (!abvjsmgadjs_class) {
+        NSLog(@"[WizardBypass] FATAL: ABVJSMGADJS class not found!");
+        return;
     }
 
+    // Create the controller and store in global
+    g_wizardController = [[abvjsmgadjs_class alloc] init];
+    NSLog(@"[WizardBypass] Created ABVJSMGADJS controller: %@ (stored in g_wizardController)", g_wizardController);
+
     // ========================================
-    // PHASE 8: CREATE ABVJSMGADJS + PAJDSAKDFJ WITH PROPER WIRING
+    // PHASE 8: CREATE ICON + FULLY REPLACE didTapIconView
     // ========================================
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] PHASE 8: CREATING WIZARD UI VIA ABVJSMGADJS");
+    NSLog(@"[WizardBypass] PHASE 8: CREATING ICON + MENU TOGGLE");
     NSLog(@"[WizardBypass] ========================================");
 
     // Get the main window
@@ -722,22 +668,12 @@ static void delayed_hook(void) {
     if (!keyWindow && [windows count] > 0) {
         keyWindow = [windows objectAtIndex:0];
     }
-
     if (!keyWindow) {
         NSLog(@"[WizardBypass] ERROR: No key window found");
         return;
     }
 
-    NSLog(@"[WizardBypass] Got key window: %@", keyWindow);
-
-    // Step 1: Create ABVJSMGADJS controller
-    id wizardController = nil;
-    if (abvjsmgadjs_class) {
-        wizardController = [[abvjsmgadjs_class alloc] init];
-        NSLog(@"[WizardBypass] Created ABVJSMGADJS controller: %@", wizardController);
-    }
-
-    // Step 2: Create Pajdsakdfj icon
+    // Create Pajdsakdfj icon
     Class pajdsakdfj_class = objc_getClass("Pajdsakdfj");
     if (!pajdsakdfj_class) {
         NSLog(@"[WizardBypass] ERROR: Pajdsakdfj class not found");
@@ -745,7 +681,6 @@ static void delayed_hook(void) {
     }
 
     CGRect frame = CGRectMake(keyWindow.bounds.size.width - 80, 100, 60, 60);
-
     SEL initSelector = NSSelectorFromString(@"initWithFrame:type:");
     id iconView = nil;
 
@@ -760,191 +695,215 @@ static void delayed_hook(void) {
         NSLog(@"[WizardBypass] Failed to create Pajdsakdfj icon");
         return;
     }
+    g_wizardIcon = iconView;
 
-    NSLog(@"[WizardBypass] Created Pajdsakdfj icon: %@", iconView);
-
-    // Step 3: Wire icon -> controller by finding ABVJSMGADJS ivar on Pajdsakdfj
-    // Pajdsakdfj's ivars were listed in class_analysis. We need to find which one references ABVJSMGADJS
-    // From properties: Pajdsakdfj has the same ivars as Wksahfnasj including object references
-    NSLog(@"[WizardBypass] Dumping Pajdsakdfj ivars to find controller ref:");
-    unsigned int pajIvarCount;
-    Ivar *pajIvars = class_copyIvarList(pajdsakdfj_class, &pajIvarCount);
-    NSLog(@"[WizardBypass] Pajdsakdfj has %d ivars", pajIvarCount);
-    for (unsigned int i = 0; i < pajIvarCount; i++) {
-        const char *name = ivar_getName(pajIvars[i]);
-        const char *type = ivar_getTypeEncoding(pajIvars[i]);
-        NSLog(@"[WizardBypass]   ivar[%d]: %s (type: %s)", i, name, type);
-
-        // If this ivar is of type ABVJSMGADJS, set our controller on it
-        if (wizardController && type && strstr(type, "ABVJSMGADJS")) {
-            NSLog(@"[WizardBypass] *** FOUND ABVJSMGADJS ivar: %s - setting controller! ***", name);
-            object_setIvar(iconView, pajIvars[i], wizardController);
+    // Wire controller -> icon (set first Pajdsakdfj ivar on controller)
+    unsigned int ctrlIvarCount;
+    Ivar *ctrlIvars = class_copyIvarList(abvjsmgadjs_class, &ctrlIvarCount);
+    for (unsigned int i = 0; i < ctrlIvarCount; i++) {
+        const char *type = ivar_getTypeEncoding(ctrlIvars[i]);
+        const char *name = ivar_getName(ctrlIvars[i]);
+        if (type && strstr(type, "Pajdsakdfj")) {
+            NSLog(@"[WizardBypass] Setting ABVJSMGADJS::%s = icon", name);
+            object_setIvar(g_wizardController, ctrlIvars[i], iconView);
+            break; // Set first one only
         }
     }
-    free(pajIvars);
+    free(ctrlIvars);
 
-    // Step 4: Wire controller -> icon by setting the icon reference on ABVJSMGADJS
-    if (wizardController) {
-        unsigned int ctrlIvarCount;
-        Ivar *ctrlIvars = class_copyIvarList(abvjsmgadjs_class, &ctrlIvarCount);
-        BOOL setOne = NO;
-        for (unsigned int i = 0; i < ctrlIvarCount; i++) {
-            const char *name = ivar_getName(ctrlIvars[i]);
-            const char *type = ivar_getTypeEncoding(ctrlIvars[i]);
-            // Set the first Pajdsakdfj ivar to our icon
-            if (type && strstr(type, "Pajdsakdfj") && !setOne) {
-                NSLog(@"[WizardBypass] *** Setting ABVJSMGADJS::%s = our Pajdsakdfj icon ***", name);
-                object_setIvar(wizardController, ctrlIvars[i], iconView);
-                setOne = YES;
-            }
-        }
-        free(ctrlIvars);
-    }
+    // Call PADSGFNDSAHJ to let it do icon setup
+    NSLog(@"[WizardBypass] Calling PADSGFNDSAHJ (icon setup)...");
+    SEL padsgfn = sel_registerName("PADSGFNDSAHJ");
+    ((void (*)(id, SEL))objc_msgSend)(g_wizardController, padsgfn);
 
-    // Step 5: Force frame, visibility, and appearance
+    // Check if menu was created by PADSGFNDSAHJ
+    Ivar menuIvar = class_getInstanceVariable(abvjsmgadjs_class, "_jdsghadurewmf");
+    id menuAfterSetup = menuIvar ? object_getIvar(g_wizardController, menuIvar) : nil;
+    NSLog(@"[WizardBypass] Menu (_jdsghadurewmf) after PADSGFNDSAHJ: %@", menuAfterSetup);
+
+    // Call full chain: IKAFHFDSAJ -> ASFGAHJFAHS -> MdhsaJFSAJ
+    NSLog(@"[WizardBypass] Calling IKAFHFDSAJ (full setup chain)...");
+    SEL ikafhf = sel_registerName("IKAFHFDSAJ");
+    ((void (*)(id, SEL))objc_msgSend)(g_wizardController, ikafhf);
+
+    // Check menu again
+    menuAfterSetup = menuIvar ? object_getIvar(g_wizardController, menuIvar) : nil;
+    NSLog(@"[WizardBypass] Menu after IKAFHFDSAJ: %@", menuAfterSetup);
+
+    // Set up icon appearance
     [iconView setFrame:frame];
     [iconView setHidden:NO];
     [iconView setAlpha:1.0];
     [iconView setUserInteractionEnabled:YES];
+    [iconView setBackgroundColor:[UIColor colorWithRed:0.5 green:0.0 blue:0.8 alpha:0.8]];
+    ((UIView*)iconView).layer.cornerRadius = 30;
+    ((UIView*)iconView).clipsToBounds = YES;
 
-    // Fix the _Vmasfisahf UIImageView (icon image)
+    // Fix icon image
     Ivar imageViewIvar = class_getInstanceVariable(pajdsakdfj_class, "_Vmasfisahf");
     if (imageViewIvar) {
-        UIImageView* existingImageView = object_getIvar(iconView, imageViewIvar);
-        if (!existingImageView || [(UIView*)existingImageView frame].size.width == 0) {
+        UIImageView* existing = object_getIvar(iconView, imageViewIvar);
+        if (!existing || existing.frame.size.width == 0) {
             UIImageView* imageView = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, 60, 60)];
-
             UIGraphicsBeginImageContextWithOptions(CGSizeMake(60, 60), NO, 0.0);
             CGContextRef ctx = UIGraphicsGetCurrentContext();
             CGContextSetFillColorWithColor(ctx, [UIColor colorWithRed:0.5 green:0.0 blue:0.8 alpha:1.0].CGColor);
             CGContextFillEllipseInRect(ctx, CGRectMake(0, 0, 60, 60));
             CGContextSetFillColorWithColor(ctx, [UIColor whiteColor].CGColor);
-            NSDictionary* attrs = @{
+            [@"W" drawInRect:CGRectMake(16, 12, 30, 40) withAttributes:@{
                 NSFontAttributeName: [UIFont boldSystemFontOfSize:28],
                 NSForegroundColorAttributeName: [UIColor whiteColor]
-            };
-            [@"W" drawInRect:CGRectMake(16, 12, 30, 40) withAttributes:attrs];
-            UIImage* iconImage = UIGraphicsGetImageFromCurrentImageContext();
+            }];
+            UIImage* img = UIGraphicsGetImageFromCurrentImageContext();
             UIGraphicsEndImageContext();
-
-            imageView.image = iconImage;
-            imageView.contentMode = UIViewContentModeScaleAspectFit;
+            imageView.image = img;
             object_setIvar(iconView, imageViewIvar, imageView);
             [iconView addSubview:imageView];
-            NSLog(@"[WizardBypass] Created and set icon image");
-        } else {
-            existingImageView.hidden = NO;
-            existingImageView.alpha = 1.0;
-            if (existingImageView.frame.size.width == 0) {
-                existingImageView.frame = CGRectMake(0, 0, 60, 60);
-            }
         }
     }
 
-    [iconView setBackgroundColor:[UIColor colorWithRed:0.5 green:0.0 blue:0.8 alpha:0.8]];
-    ((UIView*)iconView).layer.cornerRadius = 30;
-    ((UIView*)iconView).clipsToBounds = YES;
-
-    // Step 6: Hook didTapIconView to call ABVJSMGADJS methods before original
+    // ========================================
+    // FULLY REPLACE didTapIconView
+    // Original can't find controller (0 ivars). We use g_wizardController.
+    // ========================================
     SEL tapSelector = NSSelectorFromString(@"didTapIconView");
     Method tapMethod = class_getInstanceMethod(pajdsakdfj_class, tapSelector);
     if (tapMethod) {
-        IMP originalTap = method_getImplementation(tapMethod);
         IMP newTap = imp_implementationWithBlock(^(id self) {
             NSLog(@"[WizardBypass] ========================================");
-            NSLog(@"[WizardBypass] didTapIconView CALLED");
+            NSLog(@"[WizardBypass] TAP! Using g_wizardController to toggle menu");
             NSLog(@"[WizardBypass] ========================================");
 
-            // Dump ALL ivars on self (Pajdsakdfj) to see current state
-            unsigned int ivCount;
-            Ivar *ivs = class_copyIvarList([self class], &ivCount);
-            for (unsigned int i = 0; i < ivCount; i++) {
-                const char *nm = ivar_getName(ivs[i]);
-                const char *tp = ivar_getTypeEncoding(ivs[i]);
-                if (tp && tp[0] == '@') {
-                    id val = object_getIvar(self, ivs[i]);
-                    NSLog(@"[WizardBypass] PAJD ivar %s (%s) = %@", nm, tp, val);
-                } else if (tp && (tp[0] == 'c' || tp[0] == 'B')) {
-                    ptrdiff_t offset = ivar_getOffset(ivs[i]);
-                    BOOL val = *(BOOL *)((char *)(__bridge void *)self + offset);
-                    NSLog(@"[WizardBypass] PAJD ivar %s (%s) = %d", nm, tp, val);
-                } else if (tp && (tp[0] == 'i' || tp[0] == 'q' || tp[0] == 'l' || tp[0] == 'I' || tp[0] == 'Q')) {
-                    ptrdiff_t offset = ivar_getOffset(ivs[i]);
-                    long val = *(long *)((char *)(__bridge void *)self + offset);
-                    NSLog(@"[WizardBypass] PAJD ivar %s (%s) = %ld", nm, tp, val);
-                }
+            if (!g_wizardController) {
+                NSLog(@"[WizardBypass] ERROR: g_wizardController is nil!");
+                return;
             }
-            free(ivs);
 
-            // Try calling ABVJSMGADJS methods if we have a controller ref
-            // Search for any ivar of type ABVJSMGADJS on self
-            unsigned int ivCount2;
-            Ivar *ivs2 = class_copyIvarList([self class], &ivCount2);
-            for (unsigned int i = 0; i < ivCount2; i++) {
-                const char *tp = ivar_getTypeEncoding(ivs2[i]);
-                if (tp && strstr(tp, "ABVJSMGADJS")) {
-                    id ctrl = object_getIvar(self, ivs2[i]);
-                    if (ctrl) {
-                        NSLog(@"[WizardBypass] Found ABVJSMGADJS controller: %@", ctrl);
-                        // Try calling its setup methods
-                        SEL padsgfn = sel_registerName("PADSGFNDSAHJ");
-                        if ([ctrl respondsToSelector:padsgfn]) {
-                            NSLog(@"[WizardBypass] Calling ABVJSMGADJS::PADSGFNDSAHJ...");
-                            ((void (*)(id, SEL))objc_msgSend)(ctrl, padsgfn);
+            // Get menu ivar from controller
+            Class ctrlClass = [g_wizardController class];
+            Ivar mIvar = class_getInstanceVariable(ctrlClass, "_jdsghadurewmf");
+            id menu = mIvar ? object_getIvar(g_wizardController, mIvar) : nil;
+            NSLog(@"[WizardBypass] Current menu: %@", menu);
+
+            if (menu) {
+                // Menu exists - toggle visibility
+                BOOL isHidden = [(UIView*)menu isHidden];
+                NSLog(@"[WizardBypass] Menu exists, isHidden=%d, toggling...", isHidden);
+                [(UIView*)menu setHidden:!isHidden];
+                if (isHidden) {
+                    [(UIView*)menu setAlpha:1.0];
+                    UIWindow* w = [(UIView*)menu window];
+                    if (w) [w bringSubviewToFront:menu];
+                }
+                return;
+            }
+
+            // Menu doesn't exist - try to create it
+            NSLog(@"[WizardBypass] Menu is nil, attempting to create Wksahfnasj...");
+
+            Class menuClass = objc_getClass("Wksahfnasj");
+            if (!menuClass) {
+                NSLog(@"[WizardBypass] Wksahfnasj class not found!");
+                return;
+            }
+
+            // Get the key window
+            UIWindow* kw = nil;
+            NSArray* wins = [[UIApplication sharedApplication] windows];
+            for (UIWindow* w in wins) {
+                if (w.isKeyWindow) { kw = w; break; }
+            }
+            if (!kw && [wins count] > 0) kw = [wins objectAtIndex:0];
+
+            if (!kw) {
+                NSLog(@"[WizardBypass] No window for menu!");
+                return;
+            }
+
+            // Try initWithFrame: for the menu (full screen)
+            CGRect menuFrame = kw.bounds;
+            NSLog(@"[WizardBypass] Creating Wksahfnasj with frame: %@", NSStringFromCGRect(menuFrame));
+
+            @try {
+                id newMenu = [[menuClass alloc] initWithFrame:menuFrame];
+                if (newMenu) {
+                    NSLog(@"[WizardBypass] Wksahfnasj created: %@", newMenu);
+
+                    // Wire it: set AJFADSHFSAJXN (Metal renderer) if needed
+                    // Set it on the controller
+                    if (mIvar) {
+                        object_setIvar(g_wizardController, mIvar, newMenu);
+                        NSLog(@"[WizardBypass] Set menu on controller");
+                    }
+
+                    // Also set the controller ref on menu (paJFSAUJJFSAC ivar)
+                    Class ajfClass = objc_getClass("AJFADSHFSAJXN");
+                    Ivar menuCtrlIvar = class_getInstanceVariable(menuClass, "_paJFSAUJJFSAC");
+                    if (menuCtrlIvar) {
+                        NSLog(@"[WizardBypass] Wksahfnasj has _paJFSAUJJFSAC ivar");
+                        // It expects AJFADSHFSAJXN, not ABVJSMGADJS
+                    }
+
+                    // Dump Wksahfnasj ivars to see what it has
+                    unsigned int wkIvarCount;
+                    Ivar *wkIvars = class_copyIvarList(menuClass, &wkIvarCount);
+                    NSLog(@"[WizardBypass] Wksahfnasj has %d ivars:", wkIvarCount);
+                    for (unsigned int i = 0; i < wkIvarCount; i++) {
+                        const char *nm = ivar_getName(wkIvars[i]);
+                        const char *tp = ivar_getTypeEncoding(wkIvars[i]);
+                        id val = nil;
+                        if (tp && tp[0] == '@') val = object_getIvar(newMenu, wkIvars[i]);
+                        NSLog(@"[WizardBypass]   %s (%s) = %@", nm, tp, val);
+                    }
+                    free(wkIvars);
+
+                    // Try to set up MTKView if needed
+                    Ivar mtkIvar = class_getInstanceVariable(menuClass, "_pPfuasjrasfh");
+                    if (mtkIvar) {
+                        id mtkView = object_getIvar(newMenu, mtkIvar);
+                        NSLog(@"[WizardBypass] _pPfuasjrasfh (MTKView): %@", mtkView);
+                    }
+
+                    // Add to window
+                    [(UIView*)newMenu setHidden:NO];
+                    [(UIView*)newMenu setAlpha:1.0];
+                    [kw addSubview:newMenu];
+                    [kw bringSubviewToFront:newMenu];
+                    NSLog(@"[WizardBypass] Added menu to window!");
+
+                    // Try calling Wksahfnasj setup methods
+                    SEL paDJSAFBSANC = sel_registerName("paDJSAFBSANC");
+                    if ([newMenu respondsToSelector:paDJSAFBSANC]) {
+                        NSLog(@"[WizardBypass] Calling Wksahfnasj::paDJSAFBSANC...");
+                        @try {
+                            ((void (*)(id, SEL))objc_msgSend)(newMenu, paDJSAFBSANC);
+                            NSLog(@"[WizardBypass] paDJSAFBSANC returned!");
+                        } @catch (NSException *e) {
+                            NSLog(@"[WizardBypass] paDJSAFBSANC exception: %@", e);
                         }
                     }
+                } else {
+                    NSLog(@"[WizardBypass] Wksahfnasj initWithFrame: returned nil!");
                 }
-            }
-            free(ivs2);
-
-            // Call original didTapIconView
-            NSLog(@"[WizardBypass] Calling ORIGINAL didTapIconView...");
-            typedef void (*OrigFunc)(id, SEL);
-            ((OrigFunc)originalTap)(self, tapSelector);
-            NSLog(@"[WizardBypass] Original didTapIconView RETURNED");
-
-            // Check if menu was created
-            Ivar menuIvar = class_getInstanceVariable([self class], "_jdsghadurewmf");
-            if (menuIvar) {
-                id menuRef = object_getIvar(self, menuIvar);
-                NSLog(@"[WizardBypass] _jdsghadurewmf (menu) after tap: %@", menuRef);
+            } @catch (NSException *exception) {
+                NSLog(@"[WizardBypass] Exception creating Wksahfnasj: %@", exception);
             }
         });
         method_setImplementation(tapMethod, newTap);
-        NSLog(@"[WizardBypass] didTapIconView hook installed");
+        NSLog(@"[WizardBypass] didTapIconView FULLY REPLACED (uses g_wizardController)");
     }
 
-    // Step 7: Add to window
+    // Add icon to window
     [keyWindow addSubview:iconView];
     [keyWindow bringSubviewToFront:iconView];
-    NSLog(@"[WizardBypass] Added Wizard icon to window at frame: %@", NSStringFromCGRect(frame));
+    NSLog(@"[WizardBypass] Icon added to window at %@", NSStringFromCGRect(frame));
 
-    // Step 8: Also try calling ABVJSMGADJS setup methods
-    if (wizardController) {
-        NSLog(@"[WizardBypass] Trying ABVJSMGADJS setup methods...");
-        SEL padsgfn = sel_registerName("PADSGFNDSAHJ");
-        SEL ikafhf = sel_registerName("IKAFHFDSAJ");
-        SEL asfga = sel_registerName("ASFGAHJFAHS");
-        SEL mdhsa = sel_registerName("MdhsaJFSAJ");
-
-        if ([wizardController respondsToSelector:padsgfn]) {
-            NSLog(@"[WizardBypass] Calling PADSGFNDSAHJ...");
-            ((void (*)(id, SEL))objc_msgSend)(wizardController, padsgfn);
-        }
-        if ([wizardController respondsToSelector:ikafhf]) {
-            NSLog(@"[WizardBypass] Calling IKAFHFDSAJ...");
-            ((void (*)(id, SEL))objc_msgSend)(wizardController, ikafhf);
-        }
-        if ([wizardController respondsToSelector:asfga]) {
-            NSLog(@"[WizardBypass] Calling ASFGAHJFAHS...");
-            ((void (*)(id, SEL))objc_msgSend)(wizardController, asfga);
-        }
-        if ([wizardController respondsToSelector:mdhsa]) {
-            NSLog(@"[WizardBypass] Calling MdhsaJFSAJ...");
-            ((void (*)(id, SEL))objc_msgSend)(wizardController, mdhsa);
-        }
-    }
-
+    // Final menu state check
+    id finalMenu = menuIvar ? object_getIvar(g_wizardController, menuIvar) : nil;
+    NSLog(@"[WizardBypass] === FINAL STATE ===");
+    NSLog(@"[WizardBypass] g_wizardController: %@", g_wizardController);
+    NSLog(@"[WizardBypass] g_wizardIcon: %@", g_wizardIcon);
+    NSLog(@"[WizardBypass] Menu (_jdsghadurewmf): %@", finalMenu);
     NSLog(@"[WizardBypass] PHASE 8 COMPLETE");
 }
 
