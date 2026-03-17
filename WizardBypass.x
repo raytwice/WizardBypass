@@ -17,6 +17,17 @@ static id g_wizardController = nil;
 static id g_wizardIcon = nil;
 
 // ============================================================================
+// GLOBAL: Original IMP storage for swap-and-call anti-tamper bypass
+// Strategy: temporarily restore original IMPs before calling drawInMTKView:
+// so the anti-tamper check sees unmodified methods, then re-swizzle after.
+// ============================================================================
+static IMP g_originalDrawInMTKView = NULL;   // Original drawInMTKView: IMP
+static Method g_fbIsEqualMethod = NULL;      // FramebufferDescriptor::isEqual: method
+static IMP g_fbIsEqualOriginal = NULL;       // Original isEqual: IMP
+static IMP g_fbIsEqualHooked = NULL;         // Our hooked isEqual: IMP
+static BOOL g_renderingInProgress = NO;      // Reentrancy guard
+
+// ============================================================================
 // PHASE 1: DYLD HIDING - Hide our dylib from detection
 // ============================================================================
 
@@ -138,10 +149,28 @@ static void force_authentication(void) {
             if (type_encoding[0] == 'c' || type_encoding[0] == 'B') {
                 NSLog(@"[WizardBypass]   Hooking BOOL: %s::%s -> YES", class_name, name);
 
+                // SAVE original IMP for FramebufferDescriptor::isEqual:
+                // so we can restore it during swap-and-call render
+                IMP originalIMP = method_getImplementation(methods[j]);
+
                 IMP new_imp = imp_implementationWithBlock(^BOOL(id self) {
-                    NSLog(@"[WizardBypass]   *** CALLED: %s::%s -> returning YES", class_name, name);
+                    // During rendering, let the original through
+                    if (g_renderingInProgress) {
+                        typedef BOOL (*OrigBoolFunc)(id, SEL);
+                        return ((OrigBoolFunc)originalIMP)(self, selector);
+                    }
                     return YES;
                 });
+
+                // Track FramebufferDescriptor::isEqual: specifically
+                if (strcmp(class_name, "FramebufferDescriptor") == 0 &&
+                    strcmp(name, "isEqual:") == 0) {
+                    g_fbIsEqualMethod = methods[j];
+                    g_fbIsEqualOriginal = originalIMP;
+                    g_fbIsEqualHooked = new_imp;
+                    NSLog(@"[WizardBypass]   >> Saved original isEqual: IMP @ %p for swap-and-call", originalIMP);
+                }
+
                 method_setImplementation(methods[j], new_imp);
                 hooked_methods++;
             }
@@ -838,13 +867,34 @@ static void delayed_hook(void) {
                 }
             }
 
-            // TOTAL NO-OP: Never call original drawInMTKView:
-            // This prevents Wizard's anti-tamper code from executing
-            IMP noopDraw = imp_implementationWithBlock(^(id self, id mtkView) {
-                // Intentionally empty — avoids 0xDEAD anti-tamper kill switch
+            // Save original drawInMTKView: IMP for swap-and-call
+            g_originalDrawInMTKView = originalDraw;
+            NSLog(@"[WizardBypass] Saved original drawInMTKView: IMP @ %p", g_originalDrawInMTKView);
+
+            // SWAP-AND-CALL: Instead of no-op, we call the original drawInMTKView:
+            // but set g_renderingInProgress=YES so our BOOL hooks pass through
+            // to originals during the anti-tamper check.
+            static int drawCallCount = 0;
+            IMP smartDraw = imp_implementationWithBlock(^(id self, id mtkView) {
+                if (!g_originalDrawInMTKView) return;
+
+                // Set flag so all hooked BOOL methods return their ORIGINAL
+                // values during the render call (anti-tamper checks original IMPs)
+                g_renderingInProgress = YES;
+
+                // Call the ORIGINAL drawInMTKView:
+                typedef void (*DrawFunc)(id, SEL, id);
+                ((DrawFunc)g_originalDrawInMTKView)(self, drawSel, mtkView);
+
+                g_renderingInProgress = NO;
+
+                drawCallCount++;
+                if (drawCallCount <= 3 || drawCallCount % 300 == 0) {
+                    NSLog(@"[WizardBypass] drawInMTKView: swap-and-call #%d SURVIVED!", drawCallCount);
+                }
             });
-            method_setImplementation(drawMethod, noopDraw);
-            NSLog(@"[WizardBypass] drawInMTKView: replaced with NO-OP (anti-tamper bypass)");
+            method_setImplementation(drawMethod, smartDraw);
+            NSLog(@"[WizardBypass] drawInMTKView: replaced with SWAP-AND-CALL (anti-tamper bypass v2)");
         }
 
         // Also hook initializePlatform for safety
