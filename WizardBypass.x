@@ -639,47 +639,32 @@ static void delayed_hook(void) {
     NSLog(@"[WizardBypass] PHASE 7: HOOKING METAL + SETTING UP CONTROLLER");
     NSLog(@"[WizardBypass] ========================================");
 
-    // FIRST: Hook drawInMTKView: on AJFADSHFSAJXN to prevent Metal crashes
-    // The crash is caused by tsjfhasjfsa (render callback block) being nil on Wksahfnasj
-    // When drawInMTKView: calls through to this nil block → EXC_BAD_ACCESS
-    // Fix: check if the callback is valid before calling original draw
+    // FIRST: Hook drawInMTKView: on AJFADSHFSAJXN
+    // The ORIGINAL drawInMTKView: contains anti-tamper checks that jump to 0xDEAD
+    // We MUST NOT call the original - replace with complete no-op
     Class ajfClass = objc_getClass("AJFADSHFSAJXN");
     if (ajfClass) {
         SEL drawSel = NSSelectorFromString(@"drawInMTKView:");
         Method drawMethod = class_getInstanceMethod(ajfClass, drawSel);
         if (drawMethod) {
+            // Dump original IMP bytes for anti-tamper analysis
             IMP originalDraw = method_getImplementation(drawMethod);
-            IMP safeDraw = imp_implementationWithBlock(^(id self, id mtkView) {
-                // Check if the render callback exists on the menu before drawing
-                if (g_wizardController) {
-                    Class ctrlCls = [g_wizardController class];
-                    Ivar mIvar = class_getInstanceVariable(ctrlCls, "_jdsghadurewmf");
-                    if (mIvar) {
-                        id menuObj = object_getIvar(g_wizardController, mIvar);
-                        if (menuObj) {
-                            Class wksCls = [menuObj class];
-                            Ivar cbIvar = class_getInstanceVariable(wksCls, "tsjfhasjfsa");
-                            if (cbIvar) {
-                                // Read the raw pointer value of the block
-                                ptrdiff_t offset = ivar_getOffset(cbIvar);
-                                void *blockPtr = *(void **)((char *)(__bridge void *)menuObj + offset);
-                                if (!blockPtr) {
-                                    // Render callback is nil — skip draw to avoid EXC_BAD_ACCESS
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
-                @try {
-                    typedef void (*DrawFunc)(id, SEL, id);
-                    ((DrawFunc)originalDraw)(self, drawSel, mtkView);
-                } @catch (NSException *e) {
-                    NSLog(@"[WizardBypass] drawInMTKView: CAUGHT exception: %@", e);
-                }
+            unsigned char *impBytes = (unsigned char *)originalDraw;
+            NSMutableString *hexDump = [NSMutableString string];
+            for (int i = 0; i < 64; i++) {
+                [hexDump appendFormat:@"%02x ", impBytes[i]];
+                if ((i + 1) % 16 == 0) [hexDump appendString:@"\n"];
+            }
+            NSLog(@"[WizardBypass] === ORIGINAL drawInMTKView: IMP @ %p ===", originalDraw);
+            NSLog(@"[WizardBypass] %@", hexDump);
+
+            // TOTAL NO-OP: Never call original drawInMTKView:
+            // This prevents Wizard's anti-tamper code from executing
+            IMP noopDraw = imp_implementationWithBlock(^(id self, id mtkView) {
+                // Intentionally empty — avoids 0xDEAD anti-tamper kill switch
             });
-            method_setImplementation(drawMethod, safeDraw);
-            NSLog(@"[WizardBypass] Hooked drawInMTKView: with nil-callback guard");
+            method_setImplementation(drawMethod, noopDraw);
+            NSLog(@"[WizardBypass] drawInMTKView: replaced with NO-OP (anti-tamper bypass)");
         }
 
         // Also hook initializePlatform for safety
@@ -702,6 +687,50 @@ static void delayed_hook(void) {
         }
     } else {
         NSLog(@"[WizardBypass] WARNING: AJFADSHFSAJXN class not found for safety hooks");
+    }
+
+    // Dump unknown classes for anti-tamper intelligence
+    Class kmsjClass = objc_getClass("Kmsjfaigh");
+    if (kmsjClass) {
+        unsigned int kmMethodCount;
+        Method *kmMethods = class_copyMethodList(kmsjClass, &kmMethodCount);
+        NSLog(@"[WizardBypass] === Kmsjfaigh class: %d methods ===", kmMethodCount);
+        for (unsigned int i = 0; i < kmMethodCount; i++) {
+            SEL sel = method_getName(kmMethods[i]);
+            char *retType = method_copyReturnType(kmMethods[i]);
+            NSLog(@"[WizardBypass]   Kmsjfaigh::%s (ret: %s)", sel_getName(sel), retType);
+            free(retType);
+        }
+        free(kmMethods);
+        // Dump ivars too
+        unsigned int kmIvarCount;
+        Ivar *kmIvars = class_copyIvarList(kmsjClass, &kmIvarCount);
+        NSLog(@"[WizardBypass]   Kmsjfaigh ivars: %d", kmIvarCount);
+        for (unsigned int i = 0; i < kmIvarCount; i++) {
+            NSLog(@"[WizardBypass]     %s (%s)", ivar_getName(kmIvars[i]), ivar_getTypeEncoding(kmIvars[i]));
+        }
+        free(kmIvars);
+    }
+
+    Class mjshClass = objc_getClass("Mjshjgkash");
+    if (mjshClass) {
+        unsigned int mjMethodCount;
+        Method *mjMethods = class_copyMethodList(mjshClass, &mjMethodCount);
+        NSLog(@"[WizardBypass] === Mjshjgkash class: %d methods ===", mjMethodCount);
+        for (unsigned int i = 0; i < mjMethodCount; i++) {
+            SEL sel = method_getName(mjMethods[i]);
+            char *retType = method_copyReturnType(mjMethods[i]);
+            NSLog(@"[WizardBypass]   Mjshjgkash::%s (ret: %s)", sel_getName(sel), retType);
+            free(retType);
+        }
+        free(mjMethods);
+        unsigned int mjIvarCount;
+        Ivar *mjIvars = class_copyIvarList(mjshClass, &mjIvarCount);
+        NSLog(@"[WizardBypass]   Mjshjgkash ivars: %d", mjIvarCount);
+        for (unsigned int i = 0; i < mjIvarCount; i++) {
+            NSLog(@"[WizardBypass]     %s (%s)", ivar_getName(mjIvars[i]), ivar_getTypeEncoding(mjIvars[i]));
+        }
+        free(mjIvars);
     }
 
     // Create ABVJSMGADJS controller
@@ -909,7 +938,7 @@ static void delayed_hook(void) {
             NSLog(@"[WizardBypass] Menu isHidden=%d, toggling to %d", isHidden, !isHidden);
 
             if (isHidden) {
-                // SHOW menu
+                // SHOW menu — DO NOT unpause MTKView (anti-tamper runs in render loop)
                 [(UIView*)menuRef setHidden:NO];
                 [(UIView*)menuRef setUserInteractionEnabled:YES];
                 [(UIView*)menuRef setAlpha:1.0];
@@ -917,7 +946,6 @@ static void delayed_hook(void) {
                 // Bring to front
                 UIWindow* kw = [(UIView*)menuRef window];
                 if (!kw) {
-                    // Not in window yet, add it
                     NSArray* wins = [[UIApplication sharedApplication] windows];
                     for (UIWindow* w in wins) {
                         if (w.isKeyWindow) { kw = w; break; }
@@ -930,7 +958,10 @@ static void delayed_hook(void) {
                 }
                 if (kw) [kw bringSubviewToFront:menuRef];
 
-                // Unpause MTKView for rendering
+                // NOTE: MTKView stays paused — drawInMTKView: is a no-op anyway
+                // Unpausing would trigger the render loop which we don't need
+                // since drawInMTKView: is replaced with no-op
+                // BUT let's try unpausing now that the anti-tamper code is bypassed:
                 Class wksClass = objc_getClass("Wksahfnasj");
                 Ivar mtkIvar = wksClass ? class_getInstanceVariable(wksClass, "_pPfuasjrasfh") : NULL;
                 if (mtkIvar) {
@@ -939,7 +970,7 @@ static void delayed_hook(void) {
                         SEL pausedSel = NSSelectorFromString(@"setPaused:");
                         if ([mtkView respondsToSelector:pausedSel]) {
                             ((void (*)(id, SEL, BOOL))objc_msgSend)(mtkView, pausedSel, NO);
-                            NSLog(@"[WizardBypass] MTKView UNPAUSED - rendering started");
+                            NSLog(@"[WizardBypass] MTKView UNPAUSED (drawInMTKView is no-op)");
                         }
                     }
                 }
@@ -948,20 +979,6 @@ static void delayed_hook(void) {
             } else {
                 // HIDE menu
                 [(UIView*)menuRef setHidden:YES];
-
-                // Pause MTKView to save resources
-                Class wksClass = objc_getClass("Wksahfnasj");
-                Ivar mtkIvar = wksClass ? class_getInstanceVariable(wksClass, "_pPfuasjrasfh") : NULL;
-                if (mtkIvar) {
-                    id mtkView = object_getIvar(menuRef, mtkIvar);
-                    if (mtkView) {
-                        SEL pausedSel = NSSelectorFromString(@"setPaused:");
-                        if ([mtkView respondsToSelector:pausedSel]) {
-                            ((void (*)(id, SEL, BOOL))objc_msgSend)(mtkView, pausedSel, YES);
-                        }
-                    }
-                }
-
                 NSLog(@"[WizardBypass] Menu HIDDEN!");
             }
 
