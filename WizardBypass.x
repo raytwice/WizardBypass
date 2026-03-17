@@ -791,71 +791,13 @@ static void delayed_hook(void) {
     NSLog(@"[WizardBypass] Delayed hook complete - all hooks refreshed");
 
     // ========================================
-    // PHASE 7: WIZARD API DUMP + CONTROLLER SETUP
-    // v29: No drawInMTKView hook. Dump ALL Wizard classes for UIKit menu.
+    // PHASE 7: CONTROLLER SETUP
+    // v29b: API dump REMOVED from constructor (caused crash via CFNotification anti-tamper)
+    // Dump will run on first tap instead, when Wizard is fully initialized
     // ========================================
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] PHASE 7: WIZARD API DUMP (v29)");
+    NSLog(@"[WizardBypass] PHASE 7: CONTROLLER SETUP (v29b - no early API dump)");
     NSLog(@"[WizardBypass] ========================================");
-
-    // Dump ALL classes from Wizard.framework with full method + ivar details
-    unsigned int allClassCount;
-    Class *allClasses = objc_copyClassList(&allClassCount);
-    int wizardClassCount = 0;
-    for (unsigned int ci = 0; ci < allClassCount; ci++) {
-        const char *img = class_getImageName(allClasses[ci]);
-        if (!img || !strstr(img, "Wizard.framework")) continue;
-        wizardClassCount++;
-        const char *cn = class_getName(allClasses[ci]);
-        Class superCls = class_getSuperclass(allClasses[ci]);
-        const char *superName = superCls ? class_getName(superCls) : "nil";
-        NSLog(@"[WizardBypass] === CLASS: %s (super: %s) ===", cn, superName);
-
-        // Dump ivars
-        unsigned int ivarCount;
-        Ivar *ivars = class_copyIvarList(allClasses[ci], &ivarCount);
-        NSLog(@"[WizardBypass]   IVARS (%d):", ivarCount);
-        for (unsigned int iv = 0; iv < ivarCount; iv++) {
-            NSLog(@"[WizardBypass]     [%d] %s (%s) offset=%td", iv,
-                  ivar_getName(ivars[iv]), ivar_getTypeEncoding(ivars[iv]),
-                  ivar_getOffset(ivars[iv]));
-        }
-        if (ivars) free(ivars);
-
-        // Dump instance methods
-        unsigned int methodCount;
-        Method *methods = class_copyMethodList(allClasses[ci], &methodCount);
-        NSLog(@"[WizardBypass]   INSTANCE METHODS (%d):", methodCount);
-        for (unsigned int mi = 0; mi < methodCount; mi++) {
-            SEL sel = method_getName(methods[mi]);
-            const char *enc = method_getTypeEncoding(methods[mi]);
-            char *retType = method_copyReturnType(methods[mi]);
-            unsigned int nargs = method_getNumberOfArguments(methods[mi]);
-            NSLog(@"[WizardBypass]     [%d] %s (ret:%s args:%u enc:%s)", mi,
-                  sel_getName(sel), retType, nargs, enc);
-            free(retType);
-        }
-        if (methods) free(methods);
-
-        // Dump class methods
-        Class metaClass = object_getClass((id)allClasses[ci]);
-        unsigned int cMethodCount;
-        Method *cMethods = class_copyMethodList(metaClass, &cMethodCount);
-        if (cMethodCount > 0) {
-            NSLog(@"[WizardBypass]   CLASS METHODS (%d):", cMethodCount);
-            for (unsigned int mi = 0; mi < cMethodCount; mi++) {
-                SEL sel = method_getName(cMethods[mi]);
-                const char *enc = method_getTypeEncoding(cMethods[mi]);
-                char *retType = method_copyReturnType(cMethods[mi]);
-                NSLog(@"[WizardBypass]     [+%d] %s (ret:%s enc:%s)", mi,
-                      sel_getName(sel), retType, enc);
-                free(retType);
-            }
-        }
-        if (cMethods) free(cMethods);
-    }
-    free(allClasses);
-    NSLog(@"[WizardBypass] Total Wizard classes: %d", wizardClassCount);
 
     // Create ABVJSMGADJS controller
     Class abvjsmgadjs_class = objc_getClass("ABVJSMGADJS");
@@ -1093,6 +1035,49 @@ static void delayed_hook(void) {
     if (tapMethod) {
         IMP newTap = imp_implementationWithBlock(^(id self) {
             NSLog(@"[WizardBypass] TAP! Toggling custom UIKit menu");
+
+            // ONE-SHOT: Dump all Wizard classes on first tap (safe — Wizard fully init'd)
+            static BOOL didDumpAPI = NO;
+            if (!didDumpAPI) {
+                didDumpAPI = YES;
+                NSLog(@"[WizardBypass] === WIZARD API DUMP (on first tap) ===");
+                unsigned int allClassCount;
+                Class *allClasses = objc_copyClassList(&allClassCount);
+                int wizardClassCount = 0;
+                for (unsigned int ci = 0; ci < allClassCount; ci++) {
+                    const char *img = class_getImageName(allClasses[ci]);
+                    if (!img || !strstr(img, "Wizard.framework")) continue;
+                    wizardClassCount++;
+                    const char *cn = class_getName(allClasses[ci]);
+                    Class superCls = class_getSuperclass(allClasses[ci]);
+                    const char *superName = superCls ? class_getName(superCls) : "nil";
+                    NSLog(@"[WizardBypass] === CLASS: %s (super: %s) ===", cn, superName);
+                    // Ivars
+                    unsigned int ivarCount;
+                    Ivar *ivars = class_copyIvarList(allClasses[ci], &ivarCount);
+                    for (unsigned int iv = 0; iv < ivarCount; iv++) {
+                        NSLog(@"[WizardBypass]   ivar[%d] %s (%s) off=%td", iv,
+                              ivar_getName(ivars[iv]), ivar_getTypeEncoding(ivars[iv]),
+                              ivar_getOffset(ivars[iv]));
+                    }
+                    if (ivars) free(ivars);
+                    // Methods
+                    unsigned int methodCount;
+                    Method *methods = class_copyMethodList(allClasses[ci], &methodCount);
+                    for (unsigned int mi = 0; mi < methodCount; mi++) {
+                        SEL sel = method_getName(methods[mi]);
+                        char *retType = method_copyReturnType(methods[mi]);
+                        unsigned int nargs = method_getNumberOfArguments(methods[mi]);
+                        NSLog(@"[WizardBypass]   method[%d] %s ret:%s args:%u", mi,
+                              sel_getName(sel), retType, nargs);
+                        free(retType);
+                    }
+                    if (methods) free(methods);
+                }
+                free(allClasses);
+                NSLog(@"[WizardBypass] Total Wizard classes: %d", wizardClassCount);
+                NSLog(@"[WizardBypass] === END API DUMP ===");
+            }
 
             // Find our menu by tag
             UIWindow* kw = nil;
