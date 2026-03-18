@@ -218,37 +218,12 @@ static void setup_draw_diagnostic(void) {
 }
 
 // ============================================================================
-// DISPATCH_ASYNC HOOK — swap error block invoke -> success
-// ============================================================================
-typedef struct {
-    void *isa;
-    int32_t flags;
-    int32_t reserved;
-    void (*invoke)(void *, ...);
-} BlockLayout;
-
-static uint64_t s_error_invoke = 0;
-static uint64_t s_success_invoke = 0;
-static void (*s_orig_dispatch_async)(dispatch_queue_t, dispatch_block_t) = NULL;
-
-void hooked_dispatch_async_impl(dispatch_queue_t queue, dispatch_block_t block) {
-    BlockLayout *b = (__bridge BlockLayout *)block;
-    if (b && s_error_invoke != 0 && (uint64_t)b->invoke == s_error_invoke) {
-        NSLog(@"[WizardBypass] *** INTERCEPTED error block -> swapping to success! ***");
-        b->invoke = (void (*)(void *, ...))s_success_invoke;
-    }
-    if (s_orig_dispatch_async) {
-        s_orig_dispatch_async(queue, block);
-    }
-}
-
-// ============================================================================
 // DELAYED HOOK
 // ============================================================================
 static void delayed_hook(void) {
     NSLog(@"[WizardBypass] === DELAYED HOOK START ===");
 
-    // Binary patch
+    // Find Wizard slide
     intptr_t wizard_slide = 0;
     BOOL found = NO;
     uint32_t real_count = orig_dyld_image_count ? orig_dyld_image_count() : _dyld_image_count();
@@ -264,30 +239,33 @@ static void delayed_hook(void) {
 
     if (found) {
         NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
+    }
 
-        // ========================================
-        // BLOCK INVOKE SWAP via dispatch_async hook
-        // sub_B1F7F8 = error handler block invoke
-        // sub_B1F270 = success handler block invoke  
-        // Hook dispatch_async to swap error -> success
-        // This doesn't modify __TEXT, so no checksum trigger!
-        // ========================================
-        uint64_t error_func  = 0xB1F7F8 + wizard_slide;
-        uint64_t success_func = 0xB1F270 + wizard_slide;
+    // ========================================
+    // SCAN WIZARD CLASSES for auth methods
+    // ========================================
+    NSString *wizardClasses[] = {@"ABVJSMGADJS", @"Kmsjfaigh", @"Mjshjgkash", @"AJFADSHFSAJXN", @"Pajdsakdfj"};
+    for (int c = 0; c < 5; c++) {
+        Class cls = objc_getClass([wizardClasses[c] UTF8String]);
+        if (!cls) continue;
+        NSLog(@"[WizardBypass] === %@ METHODS ===", wizardClasses[c]);
+        unsigned int count = 0;
+        Method *methods = class_copyMethodList(cls, &count);
+        for (unsigned int i = 0; i < count; i++) {
+            NSString *name = NSStringFromSelector(method_getName(methods[i]));
+            NSLog(@"[WizardBypass]   %@: %@", wizardClasses[c], name);
+        }
+        free(methods);
 
-        // Set file-level statics for the dispatch hook
-        s_error_invoke = error_func;
-        s_success_invoke = success_func;
-
-        NSLog(@"[WizardBypass] Error invoke: 0x%llx", error_func);
-        NSLog(@"[WizardBypass] Success invoke: 0x%llx", success_func);
-
-        // Hook dispatch_async
-        struct rebinding dispatch_rebind[] = {
-            {"dispatch_async", (void *)hooked_dispatch_async_impl, (void **)&s_orig_dispatch_async},
-        };
-        rebind_symbols(dispatch_rebind, 1);
-        NSLog(@"[WizardBypass] dispatch_async hook installed (block invoke swap)");
+        // Dump all ivars (looking for BOOL auth flags)
+        unsigned int ivarCount = 0;
+        Ivar *ivars = class_copyIvarList(cls, &ivarCount);
+        for (unsigned int i = 0; i < ivarCount; i++) {
+            const char *iname = ivar_getName(ivars[i]);
+            const char *itype = ivar_getTypeEncoding(ivars[i]);
+            NSLog(@"[WizardBypass]   %@ ivar: %s (%s)", wizardClasses[c], iname, itype ? itype : "?");
+        }
+        free(ivars);
     }
 
     // ========================================
