@@ -206,10 +206,58 @@ static void delayed_hook(void) {
                 ((void (*)(id, SEL))objc_msgSend)(controller, ikaSel);
                 NSLog(@"[WizardBypass] Called IKAFHFDSAJ");
             }
+
+            // Kill timeout timers
+            Ivar timerIvar1 = class_getInstanceVariable(abvClass, "_qmshnfuas");
+            Ivar timerIvar2 = class_getInstanceVariable(abvClass, "_nvjsafhsa");
+            if (timerIvar1) {
+                NSTimer *t = object_getIvar(controller, timerIvar1);
+                if (t) [t invalidate];
+                object_setIvar(controller, timerIvar1, nil);
+            }
+            if (timerIvar2) {
+                NSTimer *t = object_getIvar(controller, timerIvar2);
+                if (t) [t invalidate];
+                object_setIvar(controller, timerIvar2, nil);
+            }
+            NSLog(@"[WizardBypass] Timeout timers killed");
         }
-    } else {
-        NSLog(@"[WizardBypass] WARNING: ABVJSMGADJS not found");
     }
+
+    // Pause ALL MTKViews and hide Wizard overlay
+    // This stops the render loop from consuming the main thread
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        Class mtkClass = objc_getClass("MTKView");
+        Class wksClass = objc_getClass("Wksahfnasj");
+        UIWindow *keyWindow = nil;
+        for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
+            if (w.isKeyWindow) { keyWindow = w; break; }
+        }
+        if (!keyWindow) keyWindow = [[[UIApplication sharedApplication] windows] firstObject];
+
+        if (keyWindow) {
+            // Recursively find and pause all MTKViews, hide Wksahfnasj
+            NSMutableArray *stack = [NSMutableArray arrayWithObject:keyWindow];
+            while (stack.count > 0) {
+                UIView *v = [stack lastObject];
+                [stack removeLastObject];
+                if (mtkClass && [v isKindOfClass:mtkClass]) {
+                    [v performSelector:sel_registerName("setPaused:") withObject:@YES];
+                    v.hidden = YES;
+                    NSLog(@"[WizardBypass] MTKView paused & hidden");
+                }
+                if (wksClass && [v isKindOfClass:wksClass]) {
+                    v.hidden = YES;
+                    NSLog(@"[WizardBypass] Wksahfnasj hidden");
+                }
+                for (UIView *sub in v.subviews) {
+                    [stack addObject:sub];
+                }
+            }
+        }
+        NSLog(@"[WizardBypass] Overlay cleanup done (catches: %d)", g_dead_catches);
+    });
 }
 
 // ============================================================================
