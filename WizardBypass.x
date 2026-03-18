@@ -14,19 +14,22 @@
 #include "fishhook.h"
 
 // ============================================================================
-// SIGBUS HANDLER
+// SIGBUS HANDLER — captures caller info for debugging
 // ============================================================================
 static volatile int g_dead_catches = 0;
 
-// Safe landing — anti-tamper threads get sent here
-static void safe_landing_sleep(void) {
-    // Keep thread alive but doing nothing forever
-    while (1) { sleep(9999); }
-}
+// Captured register state from signal handler (async-signal-safe globals)
+static volatile uint64_t g_catch_fp = 0;
+static volatile uint64_t g_catch_lr = 0;
+static volatile uint64_t g_catch_sp = 0;
+static volatile uint64_t g_catch_x0 = 0;
+static volatile uint64_t g_catch_frames[10] = {0};  // FP chain: [saved_fp, saved_lr] pairs
+static volatile int g_catch_frame_count = 0;
+static volatile int g_catch_is_main = 0;
 
-static void safe_landing_return(void) {
-    // Just return — for main thread
-    return;
+// Safe landing for background threads
+static void safe_landing_sleep(void) {
+    while (1) { sleep(9999); }
 }
 
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
@@ -37,15 +40,41 @@ static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     if (pc == 0xDEAD || pc == 0xdead) {
         g_dead_catches++;
 
-        // Check if main thread
-        BOOL isMain = pthread_main_np();
+        // Capture register state for debugging
+        g_catch_fp = mc->__ss.__fp;
+        g_catch_lr = mc->__ss.__lr;
+        g_catch_sp = mc->__ss.__sp;
+        g_catch_x0 = mc->__ss.__x[0];
+        g_catch_is_main = pthread_main_np();
 
-        if (isMain) {
-            // Main thread: return to safe_landing_return (just returns)
-            mc->__ss.__pc = (uint64_t)safe_landing_return;
-            mc->__ss.__lr = (uint64_t)safe_landing_return;
+        // Walk FP chain and save frames
+        uint64_t fp = mc->__ss.__fp;
+        g_catch_frame_count = 0;
+        for (int i = 0; i < 5 && fp > 0x1000; i++) {
+            uint64_t *frame = (uint64_t *)fp;
+            g_catch_frames[i * 2] = frame[0];     // saved FP
+            g_catch_frames[i * 2 + 1] = frame[1]; // saved LR
+            g_catch_frame_count = i + 1;
+            fp = frame[0];
+        }
+
+        if (g_catch_is_main) {
+            // Main thread: try to return to caller's caller via FP chain
+            // Skip frame 0 (anti-tamper func), use frame 1+ 
+            for (int i = 0; i < g_catch_frame_count; i++) {
+                uint64_t saved_lr = g_catch_frames[i * 2 + 1];
+                if (saved_lr > 0x100000000 && saved_lr != 0xDEAD) {
+                    mc->__ss.__pc = saved_lr;
+                    mc->__ss.__fp = g_catch_frames[i * 2];
+                    mc->__ss.__lr = saved_lr;
+                    return;
+                }
+            }
+            // Last resort: can't recover — just make it sleep too
+            mc->__ss.__pc = (uint64_t)safe_landing_sleep;
+            mc->__ss.__lr = (uint64_t)safe_landing_sleep;
         } else {
-            // Background thread: send to sleep forever
+            // Background: sleep forever
             mc->__ss.__pc = (uint64_t)safe_landing_sleep;
             mc->__ss.__lr = (uint64_t)safe_landing_sleep;
         }
@@ -99,24 +128,59 @@ static void setup_dylib_hiding(void) {
 }
 
 // ============================================================================
-// WATCHDOG — background thread monitors if main thread is alive
+// WATCHDOG — monitors main thread + dumps signal handler captures
 // ============================================================================
 static volatile BOOL g_main_thread_alive = NO;
+static int g_last_reported_catches = 0;
 
 static void start_watchdog(void) {
-    // Ping main thread every 2 seconds from background
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        for (int i = 0; i < 30; i++) {  // monitor for 60 seconds
+        // Find Wizard slide for offset calculation
+        intptr_t wizard_slide = 0;
+        uint32_t real_count = orig_dyld_image_count ? orig_dyld_image_count() : _dyld_image_count();
+        for (uint32_t i = 0; i < real_count; i++) {
+            const char *name = orig_dyld_get_image_name ? orig_dyld_get_image_name(i) : _dyld_get_image_name(i);
+            if (name && strstr(name, "Wizard.framework/Wizard")) {
+                wizard_slide = orig_dyld_get_image_vmaddr_slide ?
+                    orig_dyld_get_image_vmaddr_slide(i) : _dyld_get_image_vmaddr_slide(i);
+                break;
+            }
+        }
+
+        for (int i = 0; i < 30; i++) {
             sleep(2);
             g_main_thread_alive = NO;
             dispatch_async(dispatch_get_main_queue(), ^{
                 g_main_thread_alive = YES;
             });
-            sleep(1);  // give main thread 1 second to respond
+            sleep(1);
+
             if (g_main_thread_alive) {
                 NSLog(@"[WizardBypass] WATCHDOG: main thread ALIVE (tick %d, catches: %d)", i, g_dead_catches);
             } else {
                 NSLog(@"[WizardBypass] WATCHDOG: *** MAIN THREAD BLOCKED *** (tick %d, catches: %d)", i, g_dead_catches);
+            }
+
+            // Dump signal handler capture data when new catches appear
+            if (g_dead_catches > g_last_reported_catches) {
+                g_last_reported_catches = g_dead_catches;
+                NSLog(@"[WizardBypass] === ANTI-TAMPER CATCH #%d ===", g_dead_catches);
+                NSLog(@"[WizardBypass]   Thread: %s", g_catch_is_main ? "MAIN" : "BACKGROUND");
+                NSLog(@"[WizardBypass]   FP: 0x%llx  LR: 0x%llx  SP: 0x%llx", 
+                    (unsigned long long)g_catch_fp, 
+                    (unsigned long long)g_catch_lr, 
+                    (unsigned long long)g_catch_sp);
+                NSLog(@"[WizardBypass]   Wizard slide: 0x%lx", (long)wizard_slide);
+                for (int f = 0; f < g_catch_frame_count; f++) {
+                    uint64_t saved_lr = g_catch_frames[f * 2 + 1];
+                    uint64_t ida_offset = saved_lr - wizard_slide;
+                    NSLog(@"[WizardBypass]   Frame %d: FP=0x%llx LR=0x%llx (IDA: 0x%llx)",
+                        f,
+                        (unsigned long long)g_catch_frames[f * 2],
+                        (unsigned long long)saved_lr,
+                        (unsigned long long)ida_offset);
+                }
+                NSLog(@"[WizardBypass] === END CATCH DATA ===");
             }
         }
     });
