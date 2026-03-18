@@ -738,8 +738,8 @@ static void wizard_bypass_init(void) {
     // Phase 4: Schedule delayed re-hook after 2 seconds
     NSLog(@"[WizardBypass] Phase 4: Scheduling delayed hook in 2 seconds...");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        NSLog(@"[WizardBypass] >>> dispatch_after FIRED <<<");
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSLog(@"[WizardBypass] >>> dispatch_after FIRED (background queue) <<<");
         delayed_hook();
     });
 
