@@ -636,69 +636,73 @@ static void hook_crypto_auth(void) {
 // ============================================================================
 
 static void delayed_hook(void) {
-    NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] DELAYED HOOK - v35 diagnostic");
-    NSLog(@"[WizardBypass] ========================================");
+    @try {
+        NSLog(@"[WizardBypass] ========================================");
+        NSLog(@"[WizardBypass] DELAYED HOOK - v35e step 1: force_authentication");
+        NSLog(@"[WizardBypass] ========================================");
+        force_authentication();
 
-    // Force Wizard BOOL auth flags to YES
-    force_authentication();
+        NSLog(@"[WizardBypass] DELAYED HOOK step 2: hook_user_defaults");
+        hook_user_defaults();
 
-    // Re-hook NSUserDefaults
-    hook_user_defaults();
+        NSLog(@"[WizardBypass] DELAYED HOOK step 3: hook_crypto_auth");
+        hook_crypto_auth();
 
-    // Install crypto hooks (NSData isEqualToData: forced YES for Wizard)
-    hook_crypto_auth();
+        NSLog(@"[WizardBypass] DELAYED HOOK step 4: hook_idle_timeout_kill");
+        hook_idle_timeout_kill();
 
-    // Kill idle/timeout mechanisms
-    hook_idle_timeout_kill();
+        NSLog(@"[WizardBypass] DELAYED HOOK step 5: Wizard method hooks");
 
-    // v35c: Hook Wizard methods with VOID blocks (safe for any return type)
-    // Use method_getTypeEncoding to log return type for debugging
-    Class wksClass = objc_getClass("Wksahfnasj");
-    if (wksClass) {
-        NSString *methodNames[] = {@"paDJSAFBSANC", @"jsafbSAHCN", @"dgshdsfyewrh"};
-        for (int i = 0; i < 3; i++) {
-            SEL sel = sel_registerName([methodNames[i] UTF8String]);
-            Method m = class_getInstanceMethod(wksClass, sel);
-            if (m) {
-                const char *types = method_getTypeEncoding(m);
-                NSLog(@"[WizardBypass] Wksahfnasj::%@ type='%s'", methodNames[i], types ? types : "?");
-                __block IMP origImp = method_getImplementation(m);
-                __block SEL origSel = sel;
-                __block NSString *name = methodNames[i];
-                IMP newImp = imp_implementationWithBlock(^void(id self) {
-                    NSLog(@"[WizardBypass] *** Wksahfnasj::%@ CALLED ***", name);
-                    typedef void (*VoidFunc)(id, SEL);
-                    ((VoidFunc)origImp)(self, origSel);
-                });
-                method_setImplementation(m, newImp);
+        // v35e: Hook Wizard methods with VOID blocks (safe for any return type)
+        Class wksClass = objc_getClass("Wksahfnasj");
+        if (wksClass) {
+            NSString *methodNames[] = {@"paDJSAFBSANC", @"jsafbSAHCN", @"dgshdsfyewrh"};
+            for (int i = 0; i < 3; i++) {
+                SEL sel = sel_registerName([methodNames[i] UTF8String]);
+                Method m = class_getInstanceMethod(wksClass, sel);
+                if (m) {
+                    const char *types = method_getTypeEncoding(m);
+                    NSLog(@"[WizardBypass] Wksahfnasj::%@ type='%s'", methodNames[i], types ? types : "?");
+                    __block IMP origImp = method_getImplementation(m);
+                    __block SEL origSel = sel;
+                    __block NSString *name = methodNames[i];
+                    IMP newImp = imp_implementationWithBlock(^void(id self) {
+                        NSLog(@"[WizardBypass] *** Wksahfnasj::%@ CALLED ***", name);
+                        typedef void (*VoidFunc)(id, SEL);
+                        ((VoidFunc)origImp)(self, origSel);
+                    });
+                    method_setImplementation(m, newImp);
+                }
             }
         }
-    }
 
-    Class abvClass = objc_getClass("ABVJSMGADJS");
-    if (abvClass) {
-        NSString *methodNames[] = {@"PADSGFNDSAHJ", @"IKAFHFDSAJ", @"ASFGAHJFAHS", @"MdhsaJFSAJ"};
-        for (int i = 0; i < 4; i++) {
-            SEL sel = sel_registerName([methodNames[i] UTF8String]);
-            Method m = class_getInstanceMethod(abvClass, sel);
-            if (m) {
-                const char *types = method_getTypeEncoding(m);
-                NSLog(@"[WizardBypass] ABVJSMGADJS::%@ type='%s'", methodNames[i], types ? types : "?");
-                __block IMP origImp = method_getImplementation(m);
-                __block SEL origSel = sel;
-                __block NSString *name = methodNames[i];
-                IMP newImp = imp_implementationWithBlock(^void(id self) {
-                    NSLog(@"[WizardBypass] *** ABVJSMGADJS::%@ CALLED ***", name);
-                    typedef void (*VoidFunc)(id, SEL);
-                    ((VoidFunc)origImp)(self, origSel);
-                });
-                method_setImplementation(m, newImp);
+        NSLog(@"[WizardBypass] DELAYED HOOK step 6: ABVJSMGADJS method hooks");
+        Class abvClass = objc_getClass("ABVJSMGADJS");
+        if (abvClass) {
+            NSString *methodNames[] = {@"PADSGFNDSAHJ", @"IKAFHFDSAJ", @"ASFGAHJFAHS", @"MdhsaJFSAJ"};
+            for (int i = 0; i < 4; i++) {
+                SEL sel = sel_registerName([methodNames[i] UTF8String]);
+                Method m = class_getInstanceMethod(abvClass, sel);
+                if (m) {
+                    const char *types = method_getTypeEncoding(m);
+                    NSLog(@"[WizardBypass] ABVJSMGADJS::%@ type='%s'", methodNames[i], types ? types : "?");
+                    __block IMP origImp = method_getImplementation(m);
+                    __block SEL origSel = sel;
+                    __block NSString *name = methodNames[i];
+                    IMP newImp = imp_implementationWithBlock(^void(id self) {
+                        NSLog(@"[WizardBypass] *** ABVJSMGADJS::%@ CALLED ***", name);
+                        typedef void (*VoidFunc)(id, SEL);
+                        ((VoidFunc)origImp)(self, origSel);
+                    });
+                    method_setImplementation(m, newImp);
+                }
             }
         }
-    }
 
-    NSLog(@"[WizardBypass] Delayed hook complete (v35c - void-safe method hooks)");
+        NSLog(@"[WizardBypass] Delayed hook COMPLETE (v35e)");
+    } @catch (NSException *e) {
+        NSLog(@"[WizardBypass] !!! DELAYED HOOK EXCEPTION: %@ - %@", e.name, e.reason);
+    }
 }
 
 // ============================================================================
@@ -708,7 +712,7 @@ static void delayed_hook(void) {
 __attribute__((constructor(101)))
 static void wizard_bypass_init(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] v35 DIAGNOSTIC - EARLY INIT");
+    NSLog(@"[WizardBypass] v35e DIAGNOSTIC - EARLY INIT");
     NSLog(@"[WizardBypass] ========================================");
 
     // Phase 1: Force all Wizard BOOL auth flags to YES
@@ -735,6 +739,7 @@ static void wizard_bypass_init(void) {
     NSLog(@"[WizardBypass] Phase 4: Scheduling delayed hook in 2 seconds...");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
+        NSLog(@"[WizardBypass] >>> dispatch_after FIRED <<<");
         delayed_hook();
     });
 
