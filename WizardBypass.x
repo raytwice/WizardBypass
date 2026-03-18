@@ -243,7 +243,7 @@ static void delayed_hook(void) {
                 UIView *v = [stack lastObject];
                 [stack removeLastObject];
                 if (mtkClass && [v isKindOfClass:mtkClass]) {
-                    [v performSelector:sel_registerName("setPaused:") withObject:@YES];
+                    ((void (*)(id, SEL, BOOL))objc_msgSend)(v, sel_registerName("setPaused:"), YES);
                     v.hidden = YES;
                     NSLog(@"[WizardBypass] MTKView paused & hidden");
                 }
