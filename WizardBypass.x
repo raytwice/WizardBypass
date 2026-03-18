@@ -431,8 +431,46 @@ static void delayed_hook(void) {
         NSLog(@"[WizardBypass] IKAFHFDSAJ: does not respond!");
     }
 
+    // Call ASFGAHJFAHS (post-auth success handler)
+    NSLog(@"[WizardBypass] About to call ASFGAHJFAHS...");
+    SEL asfSel = sel_registerName("ASFGAHJFAHS");
+    if ([controller respondsToSelector:asfSel]) {
+        ((void (*)(id, SEL))objc_msgSend)(controller, asfSel);
+        NSLog(@"[WizardBypass] ASFGAHJFAHS returned OK");
+    } else {
+        NSLog(@"[WizardBypass] ASFGAHJFAHS: does not respond!");
+    }
+
+    // Call MdhsaJFSAJ (finalize auth / show menu)
+    NSLog(@"[WizardBypass] About to call MdhsaJFSAJ...");
+    SEL mdhSel = sel_registerName("MdhsaJFSAJ");
+    if ([controller respondsToSelector:mdhSel]) {
+        ((void (*)(id, SEL))objc_msgSend)(controller, mdhSel);
+        NSLog(@"[WizardBypass] MdhsaJFSAJ returned OK");
+    } else {
+        NSLog(@"[WizardBypass] MdhsaJFSAJ: does not respond!");
+    }
+
     NSLog(@"[WizardBypass] === DELAYED HOOK COMPLETE ===");
     NSLog(@"[WizardBypass] draws: %d, catches: %d", g_draw_count, g_dead_catches);
+
+    // Schedule a second attempt after 5 seconds (in case UI needs time)
+    __block id ctrl = controller;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        NSLog(@"[WizardBypass] === SECOND AUTH ATTEMPT (5s delay) ===");
+        SEL a2 = sel_registerName("ASFGAHJFAHS");
+        SEL m2 = sel_registerName("MdhsaJFSAJ");
+        if ([ctrl respondsToSelector:a2]) {
+            ((void (*)(id, SEL))objc_msgSend)(ctrl, a2);
+            NSLog(@"[WizardBypass] ASFGAHJFAHS (2nd) returned OK");
+        }
+        if ([ctrl respondsToSelector:m2]) {
+            ((void (*)(id, SEL))objc_msgSend)(ctrl, m2);
+            NSLog(@"[WizardBypass] MdhsaJFSAJ (2nd) returned OK");
+        }
+        NSLog(@"[WizardBypass] draws: %d, catches: %d", g_draw_count, g_dead_catches);
+    });
 }
 
 // ============================================================================
