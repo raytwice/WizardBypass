@@ -238,6 +238,11 @@ static void delayed_hook(void) {
     }
 
     if (found) {
+        NSLog(@"[WizardBypass] BINARY PATCH DISABLED FOR TESTING");
+        NSLog(@"[WizardBypass] Theory: code checksum detects our patch -> 0xDEAD");
+        NSLog(@"[WizardBypass] If catches stays 0, we need hook-based bypass instead");
+        // DISABLED: binary patch triggers code checksum anti-tamper
+        /*
         uint64_t error_addr   = 0xB1F7F8 + wizard_slide;
         uint64_t success_addr = 0xB1F270 + wizard_slide;
         int64_t offset = (int64_t)(success_addr - error_addr);
@@ -257,6 +262,7 @@ static void delayed_hook(void) {
         } else {
             NSLog(@"[WizardBypass] PATCH FAILED: %d", kr);
         }
+        */
     }
 
     NSLog(@"[WizardBypass] About to fake auth token...");
