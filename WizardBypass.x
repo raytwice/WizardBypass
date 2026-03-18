@@ -632,6 +632,20 @@ static void delayed_hook(void) {
     // Force Wizard BOOL auth flags to YES
     force_authentication();
 
+    // v37d: Neutralize drawInMTKView: anti-tamper (jumps to 0xDEAD)
+    Class metalClass = objc_getClass("AJFADSHFSAJXN");
+    if (metalClass) {
+        SEL drawSel = sel_registerName("drawInMTKView:");
+        Method drawMethod = class_getInstanceMethod(metalClass, drawSel);
+        if (drawMethod) {
+            IMP nopDraw = imp_implementationWithBlock(^(id self, id view) {
+                // NOP — prevent anti-tamper check from running
+            });
+            method_setImplementation(drawMethod, nopDraw);
+            NSLog(@"[WizardBypass] *** drawInMTKView: NEUTRALIZED (anti-tamper disabled) ***");
+        }
+    }
+
     // Re-hook NSUserDefaults
     hook_user_defaults();
 
