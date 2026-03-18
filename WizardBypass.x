@@ -15,30 +15,8 @@
 // ============================================================================
 static void delayed_hook(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] v38 MINIMAL - delayed hook start");
+    NSLog(@"[WizardBypass] v38b - delayed hook (binary patch)");
     NSLog(@"[WizardBypass] ========================================");
-
-    // ========================================
-    // PATCH 1: Neutralize drawInMTKView: anti-tamper
-    // This method contains a check that jumps to 0xDEAD
-    // when it detects our dylib injection
-    // ========================================
-    Class metalClass = objc_getClass("AJFADSHFSAJXN");
-    if (metalClass) {
-        SEL drawSel = sel_registerName("drawInMTKView:");
-        Method drawMethod = class_getInstanceMethod(metalClass, drawSel);
-        if (drawMethod) {
-            IMP nopDraw = imp_implementationWithBlock(^(id self, id view) {
-                // NOP
-            });
-            method_setImplementation(drawMethod, nopDraw);
-            NSLog(@"[WizardBypass] PATCH 1: drawInMTKView: NEUTRALIZED");
-        } else {
-            NSLog(@"[WizardBypass] WARNING: drawInMTKView: method not found");
-        }
-    } else {
-        NSLog(@"[WizardBypass] WARNING: AJFADSHFSAJXN class not found");
-    }
 
     // ========================================
     // PATCH 2: Redirect error display -> success display
@@ -102,14 +80,47 @@ static void delayed_hook(void) {
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
     NSLog(@"[WizardBypass] ========================================");
-    NSLog(@"[WizardBypass] v38 MINIMAL - init");
+    NSLog(@"[WizardBypass] v38b MINIMAL - init");
     NSLog(@"[WizardBypass] ========================================");
 
-    // Schedule patches after 3 seconds (Wizard needs time to load)
+    // PATCH 1: Neutralize drawInMTKView: IMMEDIATELY
+    // Must run before game renders first frame (0xDEAD anti-tamper)
+    Class metalClass = objc_getClass("AJFADSHFSAJXN");
+    if (metalClass) {
+        SEL drawSel = sel_registerName("drawInMTKView:");
+        Method drawMethod = class_getInstanceMethod(metalClass, drawSel);
+        if (drawMethod) {
+            IMP nopDraw = imp_implementationWithBlock(^(id self, id view) {
+                // NOP — anti-tamper disabled
+            });
+            method_setImplementation(drawMethod, nopDraw);
+            NSLog(@"[WizardBypass] PATCH 1: drawInMTKView: NEUTRALIZED (immediate)");
+        } else {
+            NSLog(@"[WizardBypass] WARNING: drawInMTKView: not found");
+        }
+    } else {
+        NSLog(@"[WizardBypass] WARNING: AJFADSHFSAJXN not found yet - scheduling retry");
+        // If class doesn't exist yet, retry in 0.5s
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            Class mc = objc_getClass("AJFADSHFSAJXN");
+            if (mc) {
+                SEL ds = sel_registerName("drawInMTKView:");
+                Method dm = class_getInstanceMethod(mc, ds);
+                if (dm) {
+                    IMP nd = imp_implementationWithBlock(^(id self, id view) {});
+                    method_setImplementation(dm, nd);
+                    NSLog(@"[WizardBypass] PATCH 1: drawInMTKView: NEUTRALIZED (retry)");
+                }
+            }
+        });
+    }
+
+    // Schedule binary patch after 3 seconds (Wizard needs to be fully loaded)
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         delayed_hook();
     });
 
-    NSLog(@"[WizardBypass] Patches scheduled in 3 seconds");
+    NSLog(@"[WizardBypass] Binary patch scheduled in 3 seconds");
 }
