@@ -1,5 +1,5 @@
-// WizardBypass v39 - SIGBUS HANDLER + DYLIB HIDING + PATCHES
-// Ultimate defense: catch 0xDEAD crash and survive it
+// WizardBypass v40 - DIAGNOSTIC BUILD
+// Goal: find exactly what causes the freeze
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -13,96 +13,58 @@
 #include "fishhook.h"
 
 // ============================================================================
-// SIGBUS HANDLER — catches 0xDEAD anti-tamper and survives
+// SIGBUS HANDLER
 // ============================================================================
-
 static volatile int g_dead_catches = 0;
 
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     ucontext_t *uc = (ucontext_t *)context;
     _STRUCT_MCONTEXT64 *mc = uc->uc_mcontext;
-
     uint64_t pc = mc->__ss.__pc;
 
     if (pc == 0xDEAD || pc == 0xdead) {
         g_dead_catches++;
-
-        // Walk FP chain to find a valid return address
         uint64_t fp = mc->__ss.__fp;
-
-        // Try up to 5 frames to find a valid LR
         for (int i = 0; i < 5 && fp > 0x1000; i++) {
             uint64_t *frame = (uint64_t *)fp;
             uint64_t saved_fp = frame[0];
             uint64_t saved_lr = frame[1];
-
             if (saved_lr > 0x100000000 && saved_lr != 0xDEAD) {
-                // Found a valid return address — resume there
                 mc->__ss.__pc = saved_lr;
                 mc->__ss.__fp = saved_fp;
                 mc->__ss.__sp = fp + 16;
                 mc->__ss.__lr = saved_lr;
-                return; // resume execution
+                return;
             }
             fp = saved_fp;
         }
-
-        // Last resort: skip to a safe spot — just return
-        // Set PC to a RET instruction gadget (we'll create one)
-        // For now, just try the outermost frame
-        mc->__ss.__pc = mc->__ss.__lr;
-        if (mc->__ss.__pc == 0 || mc->__ss.__pc == 0xDEAD) {
-            // Can't recover — but at least we tried
-            _exit(0); // clean exit instead of crash
-        }
+        _exit(0);
     }
-}
-
-static void install_signal_handler(void) {
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_sigaction = anti_tamper_handler;
-    sa.sa_flags = SA_SIGINFO;
-    sigemptyset(&sa.sa_mask);
-
-    sigaction(SIGBUS, &sa, NULL);
-    sigaction(SIGSEGV, &sa, NULL); // also catch SIGSEGV for 0xDEAD
-
-    NSLog(@"[WizardBypass] SIGBUS/SIGSEGV handler installed (0xDEAD catcher)");
 }
 
 // ============================================================================
 // DYLIB HIDING
 // ============================================================================
-
 static uint32_t g_hidden_index = UINT32_MAX;
-
 static uint32_t (*orig_dyld_image_count)(void);
 static const char* (*orig_dyld_get_image_name)(uint32_t);
 static const struct mach_header* (*orig_dyld_get_image_header)(uint32_t);
 static intptr_t (*orig_dyld_get_image_vmaddr_slide)(uint32_t);
 
 static uint32_t hooked_dyld_image_count(void) {
-    if (g_hidden_index != UINT32_MAX)
-        return orig_dyld_image_count() - 1;
+    if (g_hidden_index != UINT32_MAX) return orig_dyld_image_count() - 1;
     return orig_dyld_image_count();
 }
-
 static const char* hooked_dyld_get_image_name(uint32_t idx) {
-    if (g_hidden_index != UINT32_MAX && idx >= g_hidden_index)
-        return orig_dyld_get_image_name(idx + 1);
+    if (g_hidden_index != UINT32_MAX && idx >= g_hidden_index) return orig_dyld_get_image_name(idx + 1);
     return orig_dyld_get_image_name(idx);
 }
-
 static const struct mach_header* hooked_dyld_get_image_header(uint32_t idx) {
-    if (g_hidden_index != UINT32_MAX && idx >= g_hidden_index)
-        return orig_dyld_get_image_header(idx + 1);
+    if (g_hidden_index != UINT32_MAX && idx >= g_hidden_index) return orig_dyld_get_image_header(idx + 1);
     return orig_dyld_get_image_header(idx);
 }
-
 static intptr_t hooked_dyld_get_image_vmaddr_slide(uint32_t idx) {
-    if (g_hidden_index != UINT32_MAX && idx >= g_hidden_index)
-        return orig_dyld_get_image_vmaddr_slide(idx + 1);
+    if (g_hidden_index != UINT32_MAX && idx >= g_hidden_index) return orig_dyld_get_image_vmaddr_slide(idx + 1);
     return orig_dyld_get_image_vmaddr_slide(idx);
 }
 
@@ -112,11 +74,9 @@ static void setup_dylib_hiding(void) {
         const char *name = _dyld_get_image_name(i);
         if (name && strstr(name, "WizardBypass")) {
             g_hidden_index = i;
-            NSLog(@"[WizardBypass] Hiding dylib at index %u", i);
             break;
         }
     }
-
     struct rebinding rebindings[] = {
         {"_dyld_image_count", (void *)hooked_dyld_image_count, (void **)&orig_dyld_image_count},
         {"_dyld_get_image_name", (void *)hooked_dyld_get_image_name, (void **)&orig_dyld_get_image_name},
@@ -124,19 +84,72 @@ static void setup_dylib_hiding(void) {
         {"_dyld_get_image_vmaddr_slide", (void *)hooked_dyld_get_image_vmaddr_slide, (void **)&orig_dyld_get_image_vmaddr_slide},
     };
     rebind_symbols(rebindings, 4);
-    NSLog(@"[WizardBypass] Dylib hiding active");
+    NSLog(@"[WizardBypass] Dylib hiding active (idx: %u)", g_hidden_index);
 }
 
 // ============================================================================
-// DELAYED HOOK — binary patch
+// WATCHDOG — background thread monitors if main thread is alive
+// ============================================================================
+static volatile BOOL g_main_thread_alive = NO;
+
+static void start_watchdog(void) {
+    // Ping main thread every 2 seconds from background
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        for (int i = 0; i < 30; i++) {  // monitor for 60 seconds
+            sleep(2);
+            g_main_thread_alive = NO;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                g_main_thread_alive = YES;
+            });
+            sleep(1);  // give main thread 1 second to respond
+            if (g_main_thread_alive) {
+                NSLog(@"[WizardBypass] WATCHDOG: main thread ALIVE (tick %d, catches: %d)", i, g_dead_catches);
+            } else {
+                NSLog(@"[WizardBypass] WATCHDOG: *** MAIN THREAD BLOCKED *** (tick %d, catches: %d)", i, g_dead_catches);
+            }
+        }
+    });
+}
+
+// ============================================================================
+// drawInMTKView: diagnostic hook (log, don't NOP)
+// ============================================================================
+static int g_draw_count = 0;
+static IMP g_orig_drawInMTKView = NULL;
+
+static void setup_draw_diagnostic(void) {
+    Class metalClass = objc_getClass("AJFADSHFSAJXN");
+    if (!metalClass) {
+        NSLog(@"[WizardBypass] DIAG: AJFADSHFSAJXN not found");
+        return;
+    }
+    SEL drawSel = sel_registerName("drawInMTKView:");
+    Method drawMethod = class_getInstanceMethod(metalClass, drawSel);
+    if (!drawMethod) {
+        NSLog(@"[WizardBypass] DIAG: drawInMTKView: method not found");
+        return;
+    }
+
+    g_orig_drawInMTKView = method_getImplementation(drawMethod);
+    IMP diagDraw = imp_implementationWithBlock(^(id self, id view) {
+        g_draw_count++;
+        if (g_draw_count <= 3 || g_draw_count % 100 == 0) {
+            NSLog(@"[WizardBypass] DIAG: drawInMTKView called #%d", g_draw_count);
+        }
+        // Call original — signal handler protects from 0xDEAD
+        ((void (*)(id, SEL, id))g_orig_drawInMTKView)(self, sel_registerName("drawInMTKView:"), view);
+    });
+    method_setImplementation(drawMethod, diagDraw);
+    NSLog(@"[WizardBypass] DIAG: drawInMTKView: diagnostic hook installed");
+}
+
+// ============================================================================
+// DELAYED HOOK
 // ============================================================================
 static void delayed_hook(void) {
-    NSLog(@"[WizardBypass] v39 delayed hook — applying binary patch");
+    NSLog(@"[WizardBypass] === DELAYED HOOK START ===");
 
-    // drawInMTKView: NOT NOP'd — signal handler catches 0xDEAD if needed
-    // NOP'ing it freezes the UI since it's also the render loop
-
-    // Binary patch error->success
+    // Binary patch
     intptr_t wizard_slide = 0;
     BOOL found = NO;
     uint32_t real_count = orig_dyld_image_count ? orig_dyld_image_count() : _dyld_image_count();
@@ -145,7 +158,6 @@ static void delayed_hook(void) {
         if (name && strstr(name, "Wizard.framework/Wizard")) {
             wizard_slide = orig_dyld_get_image_vmaddr_slide ?
                 orig_dyld_get_image_vmaddr_slide(i) : _dyld_get_image_vmaddr_slide(i);
-            NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
             found = YES;
             break;
         }
@@ -154,7 +166,6 @@ static void delayed_hook(void) {
     if (found) {
         uint64_t error_addr   = 0xB1F7F8 + wizard_slide;
         uint64_t success_addr = 0xB1F270 + wizard_slide;
-
         int64_t offset = (int64_t)(success_addr - error_addr);
         int32_t imm26 = (int32_t)(offset / 4) & 0x03FFFFFF;
         uint32_t branch_instr = 0x14000000 | imm26;
@@ -162,7 +173,6 @@ static void delayed_hook(void) {
         kern_return_t kr = vm_protect(mach_task_self(),
             (vm_address_t)(error_addr & ~0xFFF), 0x1000, FALSE,
             VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-
         if (kr == KERN_SUCCESS) {
             *(uint32_t *)error_addr = branch_instr;
             sys_icache_invalidate((void *)error_addr, 4);
@@ -171,93 +181,65 @@ static void delayed_hook(void) {
                 (vm_address_t)(error_addr & ~0xFFF), 0x1000, FALSE,
                 VM_PROT_READ | VM_PROT_EXECUTE);
         } else {
-            NSLog(@"[WizardBypass] PATCH FAILED: vm_protect %d", kr);
+            NSLog(@"[WizardBypass] PATCH FAILED: %d", kr);
         }
     }
 
-    NSLog(@"[WizardBypass] v39b ready (anti-tamper catches: %d)", g_dead_catches);
-
-    // ========================================
-    // PHASE 2: Trigger Wizard UI initialization
-    // Without this, the app freezes waiting for server
-    // ========================================
-
-    // Fake auth token
+    NSLog(@"[WizardBypass] About to fake auth token...");
     [[NSUserDefaults standardUserDefaults] setObject:@"premium" forKey:@"auth-token-type"];
-    NSLog(@"[WizardBypass] Faked auth-token-type -> premium");
+    NSLog(@"[WizardBypass] Auth token faked");
 
-    // Create Wizard controller and trigger init
+    NSLog(@"[WizardBypass] About to create ABVJSMGADJS...");
     Class abvClass = objc_getClass("ABVJSMGADJS");
-    if (abvClass) {
-        id controller = [[abvClass alloc] init];
-        if (controller) {
-            NSLog(@"[WizardBypass] Created ABVJSMGADJS: %@", controller);
-
-            // Call PADSGFNDSAHJ (platform init)
-            SEL padSel = sel_registerName("PADSGFNDSAHJ");
-            if ([controller respondsToSelector:padSel]) {
-                ((void (*)(id, SEL))objc_msgSend)(controller, padSel);
-                NSLog(@"[WizardBypass] Called PADSGFNDSAHJ");
-            }
-
-            // Call IKAFHFDSAJ (show UI)
-            SEL ikaSel = sel_registerName("IKAFHFDSAJ");
-            if ([controller respondsToSelector:ikaSel]) {
-                ((void (*)(id, SEL))objc_msgSend)(controller, ikaSel);
-                NSLog(@"[WizardBypass] Called IKAFHFDSAJ");
-            }
-
-            // Kill timeout timers
-            Ivar timerIvar1 = class_getInstanceVariable(abvClass, "_qmshnfuas");
-            Ivar timerIvar2 = class_getInstanceVariable(abvClass, "_nvjsafhsa");
-            if (timerIvar1) {
-                NSTimer *t = object_getIvar(controller, timerIvar1);
-                if (t) [t invalidate];
-                object_setIvar(controller, timerIvar1, nil);
-            }
-            if (timerIvar2) {
-                NSTimer *t = object_getIvar(controller, timerIvar2);
-                if (t) [t invalidate];
-                object_setIvar(controller, timerIvar2, nil);
-            }
-            NSLog(@"[WizardBypass] Timeout timers killed");
-        }
+    if (!abvClass) {
+        NSLog(@"[WizardBypass] ERROR: ABVJSMGADJS class not found!");
+        return;
     }
 
-    // Pause ALL MTKViews and hide Wizard overlay
-    // This stops the render loop from consuming the main thread
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        Class mtkClass = objc_getClass("MTKView");
-        Class wksClass = objc_getClass("Wksahfnasj");
-        UIWindow *keyWindow = nil;
-        for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
-            if (w.isKeyWindow) { keyWindow = w; break; }
-        }
-        if (!keyWindow) keyWindow = [[[UIApplication sharedApplication] windows] firstObject];
+    id controller = [[abvClass alloc] init];
+    NSLog(@"[WizardBypass] ABVJSMGADJS created: %@", controller);
 
-        if (keyWindow) {
-            // Recursively find and pause all MTKViews, hide Wksahfnasj
-            NSMutableArray *stack = [NSMutableArray arrayWithObject:keyWindow];
-            while (stack.count > 0) {
-                UIView *v = [stack lastObject];
-                [stack removeLastObject];
-                if (mtkClass && [v isKindOfClass:mtkClass]) {
-                    ((void (*)(id, SEL, BOOL))objc_msgSend)(v, sel_registerName("setPaused:"), YES);
-                    v.hidden = YES;
-                    NSLog(@"[WizardBypass] MTKView paused & hidden");
-                }
-                if (wksClass && [v isKindOfClass:wksClass]) {
-                    v.hidden = YES;
-                    NSLog(@"[WizardBypass] Wksahfnasj hidden");
-                }
-                for (UIView *sub in v.subviews) {
-                    [stack addObject:sub];
-                }
-            }
-        }
-        NSLog(@"[WizardBypass] Overlay cleanup done (catches: %d)", g_dead_catches);
-    });
+    if (!controller) {
+        NSLog(@"[WizardBypass] ERROR: controller is nil!");
+        return;
+    }
+
+    // Kill timers BEFORE calling methods
+    Ivar timerIvar1 = class_getInstanceVariable(abvClass, "_qmshnfuas");
+    Ivar timerIvar2 = class_getInstanceVariable(abvClass, "_nvjsafhsa");
+    if (timerIvar1) {
+        NSTimer *t = object_getIvar(controller, timerIvar1);
+        if (t) [t invalidate];
+        object_setIvar(controller, timerIvar1, nil);
+        NSLog(@"[WizardBypass] Timer 1 killed");
+    }
+    if (timerIvar2) {
+        NSTimer *t = object_getIvar(controller, timerIvar2);
+        if (t) [t invalidate];
+        object_setIvar(controller, timerIvar2, nil);
+        NSLog(@"[WizardBypass] Timer 2 killed");
+    }
+
+    NSLog(@"[WizardBypass] About to call PADSGFNDSAHJ...");
+    SEL padSel = sel_registerName("PADSGFNDSAHJ");
+    if ([controller respondsToSelector:padSel]) {
+        ((void (*)(id, SEL))objc_msgSend)(controller, padSel);
+        NSLog(@"[WizardBypass] PADSGFNDSAHJ returned OK");
+    } else {
+        NSLog(@"[WizardBypass] PADSGFNDSAHJ: does not respond!");
+    }
+
+    NSLog(@"[WizardBypass] About to call IKAFHFDSAJ...");
+    SEL ikaSel = sel_registerName("IKAFHFDSAJ");
+    if ([controller respondsToSelector:ikaSel]) {
+        ((void (*)(id, SEL))objc_msgSend)(controller, ikaSel);
+        NSLog(@"[WizardBypass] IKAFHFDSAJ returned OK");
+    } else {
+        NSLog(@"[WizardBypass] IKAFHFDSAJ: does not respond!");
+    }
+
+    NSLog(@"[WizardBypass] === DELAYED HOOK COMPLETE ===");
+    NSLog(@"[WizardBypass] draws: %d, catches: %d", g_draw_count, g_dead_catches);
 }
 
 // ============================================================================
@@ -265,22 +247,32 @@ static void delayed_hook(void) {
 // ============================================================================
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizardBypass] v39 — SIGBUS HANDLER + DYLIB HIDING");
+    NSLog(@"[WizardBypass] === v40 DIAGNOSTIC BUILD ===");
 
-    // FIRST: Install signal handler (catches ANY 0xDEAD jump)
-    install_signal_handler();
+    // Signal handler first
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = anti_tamper_handler;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGSEGV, &sa, NULL);
+    NSLog(@"[WizardBypass] Signal handler installed");
 
-    // SECOND: Hide our dylib
+    // Dylib hiding
     setup_dylib_hiding();
 
-    // drawInMTKView: left alone — signal handler catches 0xDEAD if it fires
-    NSLog(@"[WizardBypass] drawInMTKView: NOT NOP'd (signal handler protects)");
+    // Diagnostic hook on drawInMTKView
+    setup_draw_diagnostic();
 
-    // DELAYED: Binary patch
+    // Watchdog (background thread)
+    start_watchdog();
+
+    // Delayed hook in 3 seconds
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         delayed_hook();
     });
 
-    NSLog(@"[WizardBypass] Init complete — all defenses active");
+    NSLog(@"[WizardBypass] === INIT COMPLETE ===");
 }
