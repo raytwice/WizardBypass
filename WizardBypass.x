@@ -10,12 +10,24 @@
 #import <libkern/OSCacheControl.h>
 #import <dlfcn.h>
 #import <signal.h>
+#import <pthread.h>
 #include "fishhook.h"
 
 // ============================================================================
 // SIGBUS HANDLER
 // ============================================================================
 static volatile int g_dead_catches = 0;
+
+// Safe landing — anti-tamper threads get sent here
+static void safe_landing_sleep(void) {
+    // Keep thread alive but doing nothing forever
+    while (1) { sleep(9999); }
+}
+
+static void safe_landing_return(void) {
+    // Just return — for main thread
+    return;
+}
 
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     ucontext_t *uc = (ucontext_t *)context;
@@ -24,21 +36,20 @@ static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
 
     if (pc == 0xDEAD || pc == 0xdead) {
         g_dead_catches++;
-        uint64_t fp = mc->__ss.__fp;
-        for (int i = 0; i < 5 && fp > 0x1000; i++) {
-            uint64_t *frame = (uint64_t *)fp;
-            uint64_t saved_fp = frame[0];
-            uint64_t saved_lr = frame[1];
-            if (saved_lr > 0x100000000 && saved_lr != 0xDEAD) {
-                mc->__ss.__pc = saved_lr;
-                mc->__ss.__fp = saved_fp;
-                mc->__ss.__sp = fp + 16;
-                mc->__ss.__lr = saved_lr;
-                return;
-            }
-            fp = saved_fp;
+
+        // Check if main thread
+        BOOL isMain = pthread_main_np();
+
+        if (isMain) {
+            // Main thread: return to safe_landing_return (just returns)
+            mc->__ss.__pc = (uint64_t)safe_landing_return;
+            mc->__ss.__lr = (uint64_t)safe_landing_return;
+        } else {
+            // Background thread: send to sleep forever
+            mc->__ss.__pc = (uint64_t)safe_landing_sleep;
+            mc->__ss.__lr = (uint64_t)safe_landing_sleep;
         }
-        _exit(0);
+        return;
     }
 }
 
