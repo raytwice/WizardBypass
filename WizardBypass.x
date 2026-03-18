@@ -18,7 +18,6 @@
 // ============================================================================
 
 static uint32_t g_hidden_index = UINT32_MAX;
-static uint32_t g_real_count = 0;
 
 // Original function pointers
 static uint32_t (*orig_dyld_image_count)(void);
