@@ -218,6 +218,31 @@ static void setup_draw_diagnostic(void) {
 }
 
 // ============================================================================
+// DISPATCH_ASYNC HOOK — swap error block invoke -> success
+// ============================================================================
+typedef struct {
+    void *isa;
+    int32_t flags;
+    int32_t reserved;
+    void (*invoke)(void *, ...);
+} BlockLayout;
+
+static uint64_t s_error_invoke = 0;
+static uint64_t s_success_invoke = 0;
+static void (*s_orig_dispatch_async)(dispatch_queue_t, dispatch_block_t) = NULL;
+
+void hooked_dispatch_async_impl(dispatch_queue_t queue, dispatch_block_t block) {
+    BlockLayout *b = (__bridge BlockLayout *)block;
+    if (b && s_error_invoke != 0 && (uint64_t)b->invoke == s_error_invoke) {
+        NSLog(@"[WizardBypass] *** INTERCEPTED error block -> swapping to success! ***");
+        b->invoke = (void (*)(void *, ...))s_success_invoke;
+    }
+    if (s_orig_dispatch_async) {
+        s_orig_dispatch_async(queue, block);
+    }
+}
+
+// ============================================================================
 // DELAYED HOOK
 // ============================================================================
 static void delayed_hook(void) {
@@ -250,38 +275,16 @@ static void delayed_hook(void) {
         uint64_t error_func  = 0xB1F7F8 + wizard_slide;
         uint64_t success_func = 0xB1F270 + wizard_slide;
 
-        // Store in globals for the dispatch hook
-        static uint64_t g_error_invoke = 0;
-        static uint64_t g_success_invoke = 0;
-        g_error_invoke = error_func;
-        g_success_invoke = success_func;
+        // Set file-level statics for the dispatch hook
+        s_error_invoke = error_func;
+        s_success_invoke = success_func;
 
         NSLog(@"[WizardBypass] Error invoke: 0x%llx", error_func);
         NSLog(@"[WizardBypass] Success invoke: 0x%llx", success_func);
 
-        // Block layout structure
-        typedef struct {
-            void *isa;
-            int32_t flags;
-            int32_t reserved;
-            void (*invoke)(void *, ...);
-        } BlockLayout;
-
         // Hook dispatch_async
-        static void (*orig_dispatch_async_fn)(dispatch_queue_t, dispatch_block_t) = NULL;
-
         struct rebinding dispatch_rebind[] = {
-            {"dispatch_async", (void *)^(dispatch_queue_t queue, dispatch_block_t block) {
-                // Check if this block's invoke matches the error handler
-                BlockLayout *b = (__bridge BlockLayout *)block;
-                if (b && (uint64_t)b->invoke == g_error_invoke) {
-                    NSLog(@"[WizardBypass] *** INTERCEPTED error block -> swapping to success! ***");
-                    b->invoke = (void (*)(void *, ...))g_success_invoke;
-                }
-                if (orig_dispatch_async_fn) {
-                    orig_dispatch_async_fn(queue, block);
-                }
-            }, (void **)&orig_dispatch_async_fn},
+            {"dispatch_async", (void *)hooked_dispatch_async_impl, (void **)&s_orig_dispatch_async},
         };
         rebind_symbols(dispatch_rebind, 1);
         NSLog(@"[WizardBypass] dispatch_async hook installed (block invoke swap)");
