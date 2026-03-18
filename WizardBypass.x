@@ -238,7 +238,53 @@ static void delayed_hook(void) {
     }
 
     if (found) {
-        NSLog(@"[WizardBypass] Wizard slide: 0x%lx (NO binary patch — checksum protected)", (long)wizard_slide);
+        NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
+
+        // ========================================
+        // BLOCK INVOKE SWAP via dispatch_async hook
+        // sub_B1F7F8 = error handler block invoke
+        // sub_B1F270 = success handler block invoke  
+        // Hook dispatch_async to swap error -> success
+        // This doesn't modify __TEXT, so no checksum trigger!
+        // ========================================
+        uint64_t error_func  = 0xB1F7F8 + wizard_slide;
+        uint64_t success_func = 0xB1F270 + wizard_slide;
+
+        // Store in globals for the dispatch hook
+        static uint64_t g_error_invoke = 0;
+        static uint64_t g_success_invoke = 0;
+        g_error_invoke = error_func;
+        g_success_invoke = success_func;
+
+        NSLog(@"[WizardBypass] Error invoke: 0x%llx", error_func);
+        NSLog(@"[WizardBypass] Success invoke: 0x%llx", success_func);
+
+        // Block layout structure
+        typedef struct {
+            void *isa;
+            int32_t flags;
+            int32_t reserved;
+            void (*invoke)(void *, ...);
+        } BlockLayout;
+
+        // Hook dispatch_async
+        static void (*orig_dispatch_async_fn)(dispatch_queue_t, dispatch_block_t) = NULL;
+
+        struct rebinding dispatch_rebind[] = {
+            {"dispatch_async", (void *)^(dispatch_queue_t queue, dispatch_block_t block) {
+                // Check if this block's invoke matches the error handler
+                BlockLayout *b = (__bridge BlockLayout *)block;
+                if (b && (uint64_t)b->invoke == g_error_invoke) {
+                    NSLog(@"[WizardBypass] *** INTERCEPTED error block -> swapping to success! ***");
+                    b->invoke = (void (*)(void *, ...))g_success_invoke;
+                }
+                if (orig_dispatch_async_fn) {
+                    orig_dispatch_async_fn(queue, block);
+                }
+            }, (void **)&orig_dispatch_async_fn},
+        };
+        rebind_symbols(dispatch_rebind, 1);
+        NSLog(@"[WizardBypass] dispatch_async hook installed (block invoke swap)");
     }
 
     // ========================================
