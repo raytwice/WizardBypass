@@ -515,15 +515,23 @@ static CCCryptorStatus (*orig_CCCrypt)(CCOperation op, CCAlgorithm alg, CCOption
 static int (*orig_memcmp)(const void *s1, const void *s2, size_t n);
 
 // ---- FISHHOOK: Replacement CCCrypt ----
-// v35e: LOG ONLY, pass through original result
+// v35h: SMART CCCrypt - Force success for small data (Wizard config/auth),
+// passthrough for large data (game assets that get corrupted with forced success)
 static CCCryptorStatus replaced_CCCrypt(CCOperation op, CCAlgorithm alg, CCOptions options,
     const void *key, size_t keyLength, const void *iv,
     const void *dataIn, size_t dataInLength,
     void *dataOut, size_t dataOutAvailable, size_t *dataOutMoved) {
     CCCryptorStatus result = orig_CCCrypt(op, alg, options, key, keyLength, iv,
                                           dataIn, dataInLength, dataOut, dataOutAvailable, dataOutMoved);
-    NSLog(@"[WizardBypass] CCCrypt: op=%d alg=%d keyLen=%zu dataLen=%zu -> status=%d",
-          op, alg, keyLength, dataInLength, result);
+    if (result != 0 && dataInLength <= 2000) {
+        // Small data: likely Wizard config/auth — force success so Wizard UI shows
+        NSLog(@"[WizardBypass] CCCrypt: op=%d dataLen=%zu FAILED(%d) -> FORCING SUCCESS (small data)",
+              op, dataInLength, result);
+        return 0; // kCCSuccess
+    }
+    if (dataInLength <= 2000) {
+        NSLog(@"[WizardBypass] CCCrypt: op=%d dataLen=%zu -> OK", op, dataInLength);
+    }
     return result;
 }
 
