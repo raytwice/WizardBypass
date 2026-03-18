@@ -567,76 +567,13 @@ static void hook_crypto_auth(void) {
         NSLog(@"[WizardBypass] fishhook already active, skipping rebind");
     }
 
-    // ---- 4. Key insight: Wizard stores auth result locally. ----
-    // The BOOL-returning methods we already hook (returning YES for all Wizard BOOLs)
-    // covers the auth state check. But the KEY ENTRY validation happens via:
-    //   a) Some hash/HMAC of the entered key
-    //   b) Compare against a stored hash
-    // Hook NSString comparison methods that Wizard might use:
-    Class nsStringClass = objc_getClass("NSString");
-    if (nsStringClass) {
-        SEL isEqSel = @selector(isEqualToString:);
-        Method isEqMethod = class_getInstanceMethod(nsStringClass, isEqSel);
-        if (isEqMethod) {
-            IMP origIsEq = method_getImplementation(isEqMethod);
-            IMP newIsEq = imp_implementationWithBlock(^BOOL(NSString* self, NSString* other) {
-                typedef BOOL (*OrigFunc)(NSString*, SEL, NSString*);
-                BOOL result = ((OrigFunc)origIsEq)(self, isEqSel, other);
+    // v36: isEqualToString / isEqualToData hooks REMOVED
+    // They were system-wide (every string/data comparison in the entire app),
+    // calling backtrace() millions of times and breaking TLS/game checksums.
+    // The diagnostic method hooks on Wksahfnasj/ABVJSMGADJS will tell us
+    // what actually fires during key validation.
 
-                // v32: INTERCEPT validation result
-                // When Wizard checks if result == "Key is invalid" and it IS true,
-                // force NO so Wizard thinks validation passed
-                if (result) {
-                    if (([other length] > 5 && [other containsString:@"invalid"]) ||
-                        ([self length] > 5 && [self containsString:@"invalid"])) {
-                        NSLog(@"[WizardBypass] *** INTERCEPTED 'invalid' check: '%@' == '%@' -> FORCING NO ***", self, other);
-                        return NO;
-                    }
-                }
-
-                // Log string comparisons from Wizard (only short strings)
-                if (caller_is_wizard() && [self length] < 100 && [other length] < 100) {
-                    NSLog(@"[WizardBypass] Wizard isEqualToString: '%@' == '%@' -> %d",
-                          self, other, result);
-                }
-                return result;
-            });
-            method_setImplementation(isEqMethod, newIsEq);
-            NSLog(@"[WizardBypass] NSString isEqualToString: hooked (v32 intercepts 'invalid')");
-        }
-    }
-
-    // ---- 5. Hook NSData isEqualToData: ----
-    // Wizard likely compares hash(enteredKey) == storedHash as NSData
-    Class nsDataClass = objc_getClass("NSData");
-    if (nsDataClass) {
-        SEL isEqDataSel = @selector(isEqualToData:);
-        Method isEqDataMethod = class_getInstanceMethod(nsDataClass, isEqDataSel);
-        if (isEqDataMethod) {
-            IMP origIsEqData = method_getImplementation(isEqDataMethod);
-            IMP newIsEqData = imp_implementationWithBlock(^BOOL(NSData* self, NSData* other) {
-                typedef BOOL (*OrigFunc)(NSData*, SEL, NSData*);
-                BOOL result = ((OrigFunc)origIsEqData)(self, isEqDataSel, other);
-
-                // v32: Force YES for crypto-sized data (no backtrace check)
-                NSUInteger len1 = [self length];
-                NSUInteger len2 = [other length];
-                if (len1 == len2 && len1 >= 16 && len1 <= 64 && !result) {
-                    NSLog(@"[WizardBypass] *** NSData isEqualToData: len=%lu FORCING YES ***",
-                          (unsigned long)len1);
-                    return YES;
-                }
-                return result;
-            });
-            method_setImplementation(isEqDataMethod, newIsEqData);
-            NSLog(@"[WizardBypass] NSData isEqualToData: hooked (v32 size-filter force YES)");
-        }
-    }
-
-    // NOTE: NSObject isEqual: hook REMOVED â€” too noisy (thousands of UIGestureRecognizer comparisons)
-    // NSData isEqualToData: and NSString isEqualToString: are the targeted hooks above
-
-    NSLog(@"[WizardBypass] Crypto auth bypass hooks complete");
+    NSLog(@"[WizardBypass] Crypto hooks complete (CCCrypt+memcmp only)");
 }
 
 // ============================================================================
