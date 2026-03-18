@@ -238,9 +238,7 @@ static void delayed_hook(void) {
     }
 
     if (found) {
-        NSLog(@"[WizardBypass] BINARY PATCH DISABLED FOR TESTING");
-        NSLog(@"[WizardBypass] Theory: code checksum detects our patch -> 0xDEAD");
-        NSLog(@"[WizardBypass] If catches stays 0, we need hook-based bypass instead");
+        NSLog(@"[WizardBypass] BINARY PATCH DISABLED FOR TESTING (slide: 0x%lx)", (long)wizard_slide);
         // DISABLED: binary patch triggers code checksum anti-tamper
         /*
         uint64_t error_addr   = 0xB1F7F8 + wizard_slide;
