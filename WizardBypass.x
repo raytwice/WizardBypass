@@ -612,82 +612,12 @@ static void hook_crypto_auth(void) {
     void *secVerify = dlsym(RTLD_DEFAULT, "SecKeyVerifySignature");
     NSLog(@"[WizardBypass] SecKeyVerifySignature: %p", secVerify);
 
-    // ---- 4. Key insight: Wizard stores auth result locally. ----
-    // The BOOL-returning methods we already hook (returning YES for all Wizard BOOLs)
-    // covers the auth state check. But the KEY ENTRY validation happens via:
-    //   a) Some hash/HMAC of the entered key
-    //   b) Compare against a stored hash
-    // Hook NSString comparison methods that Wizard might use:
-    Class nsStringClass = objc_getClass("NSString");
-    if (nsStringClass) {
-        SEL isEqSel = @selector(isEqualToString:);
-        Method isEqMethod = class_getInstanceMethod(nsStringClass, isEqSel);
-        if (isEqMethod) {
-            IMP origIsEq = method_getImplementation(isEqMethod);
-            IMP newIsEq = imp_implementationWithBlock(^BOOL(NSString* self, NSString* other) {
-                typedef BOOL (*OrigFunc)(NSString*, SEL, NSString*);
-                BOOL result = ((OrigFunc)origIsEq)(self, isEqSel, other);
+    // v37: System-wide isEqualToString/isEqualToData/isEqual hooks REMOVED
+    // They called backtrace() on EVERY comparison in the entire app,
+    // causing resource exhaustion and crashes. The IDA-guided binary patch
+    // at 0xB1F7F8->0xB1F270 handles validation bypass directly.
 
-                // Log string comparisons from Wizard
-                if (caller_is_wizard()) {
-                    NSLog(@"[WizardBypass] Wizard NSString isEqualToString: '%@' == '%@' -> %d",
-                          self, other, result);
-                }
-                return result;
-            });
-            method_setImplementation(isEqMethod, newIsEq);
-            NSLog(@"[WizardBypass] NSString isEqualToString: hooked (Wizard logging)");
-        }
-    }
-
-    // ---- 5. Hook NSData isEqualToData: ----
-    // Wizard likely compares hash(enteredKey) == storedHash as NSData
-    Class nsDataClass = objc_getClass("NSData");
-    if (nsDataClass) {
-        SEL isEqDataSel = @selector(isEqualToData:);
-        Method isEqDataMethod = class_getInstanceMethod(nsDataClass, isEqDataSel);
-        if (isEqDataMethod) {
-            IMP origIsEqData = method_getImplementation(isEqDataMethod);
-            IMP newIsEqData = imp_implementationWithBlock(^BOOL(NSData* self, NSData* other) {
-                typedef BOOL (*OrigFunc)(NSData*, SEL, NSData*);
-                BOOL result = ((OrigFunc)origIsEqData)(self, isEqDataSel, other);
-
-                if (caller_is_wizard()) {
-                    NSLog(@"[WizardBypass] Wizard NSData isEqualToData: len=%lu vs len=%lu -> %d (FORCING YES)",
-                          (unsigned long)[self length], (unsigned long)[other length], result);
-                    // FORCE the comparison to return YES — this bypasses hash comparison!
-                    return YES;
-                }
-                return result;
-            });
-            method_setImplementation(isEqDataMethod, newIsEqData);
-            NSLog(@"[WizardBypass] NSData isEqualToData: hooked — Wizard calls FORCED to YES");
-        }
-    }
-
-    // ---- 6. Hook isEqual: on NSObject (covers NSData, NSString, etc.) ----
-    Class nsObjectClass = objc_getClass("NSObject");
-    if (nsObjectClass) {
-        SEL isEqObjSel = @selector(isEqual:);
-        Method isEqObjMethod = class_getInstanceMethod(nsObjectClass, isEqObjSel);
-        if (isEqObjMethod) {
-            IMP origIsEqObj = method_getImplementation(isEqObjMethod);
-            IMP newIsEqObj = imp_implementationWithBlock(^BOOL(id self, id other) {
-                typedef BOOL (*OrigFunc)(id, SEL, id);
-                BOOL result = ((OrigFunc)origIsEqObj)(self, isEqObjSel, other);
-
-                if (caller_is_wizard()) {
-                    NSLog(@"[WizardBypass] Wizard isEqual: %@ vs %@ -> %d",
-                          NSStringFromClass([self class]), NSStringFromClass([other class]), result);
-                }
-                return result;
-            });
-            method_setImplementation(isEqObjMethod, newIsEqObj);
-            NSLog(@"[WizardBypass] NSObject isEqual: hooked (Wizard logging)");
-        }
-    }
-
-    NSLog(@"[WizardBypass] Crypto auth bypass hooks complete");
+    NSLog(@"[WizardBypass] Crypto auth bypass: using IDA-guided binary patch (no system-wide hooks)");
 }
 
 // ============================================================================
