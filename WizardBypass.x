@@ -263,43 +263,67 @@ static void delayed_hook(void) {
         }
         free(methods);
 
-        // Hook showError: -> redirect to showSuccess:
-        // SCLAlertView typically has: showError:subTitle:closeButtonTitle:duration:
-        // and showSuccess:subTitle:closeButtonTitle:duration:
-        SEL errorSel = sel_registerName("showError:");
-        SEL successSel = sel_registerName("showSuccess:");
-        Method errorMethod = class_getInstanceMethod(sclClass, errorSel);
-        Method successMethod = class_getInstanceMethod(sclClass, successSel);
+        // Swap ALL error<->success pairs found in the syslog dump
+        NSString *errorSelectors[] = {
+            @"showError:",
+            @"showError:subTitle:closeButtonTitle:duration:",
+            @"showError:title:subTitle:closeButtonTitle:duration:",
+        };
+        NSString *successSelectors[] = {
+            @"showSuccess:",
+            @"showSuccess:subTitle:closeButtonTitle:duration:",
+            @"showSuccess:title:subTitle:closeButtonTitle:duration:",
+        };
 
-        if (errorMethod && successMethod) {
-            method_exchangeImplementations(errorMethod, successMethod);
-            NSLog(@"[WizardBypass] HOOKED: showError: <-> showSuccess: SWAPPED");
-        } else {
-            NSLog(@"[WizardBypass] showError:/showSuccess: not found, scanning variants...");
-
-            // Try common SCLAlertView method signatures
-            NSString *errorSelectors[] = {
-                @"showError:subTitle:closeButtonTitle:duration:",
-                @"showError:subTitle:completeText:duration:",
-                @"showError:subTitle:duration:",
-            };
-            NSString *successSelectors[] = {
-                @"showSuccess:subTitle:closeButtonTitle:duration:",
-                @"showSuccess:subTitle:completeText:duration:",
-                @"showSuccess:subTitle:duration:",
-            };
-
-            for (int i = 0; i < 3; i++) {
-                SEL eSel = sel_registerName([errorSelectors[i] UTF8String]);
-                SEL sSel = sel_registerName([successSelectors[i] UTF8String]);
-                Method eM = class_getInstanceMethod(sclClass, eSel);
-                Method sM = class_getInstanceMethod(sclClass, sSel);
-                if (eM && sM) {
-                    method_exchangeImplementations(eM, sM);
-                    NSLog(@"[WizardBypass] HOOKED: %@ <-> %@ SWAPPED", errorSelectors[i], successSelectors[i]);
-                }
+        int swapped = 0;
+        for (int i = 0; i < 3; i++) {
+            SEL eSel = sel_registerName([errorSelectors[i] UTF8String]);
+            SEL sSel = sel_registerName([successSelectors[i] UTF8String]);
+            Method eM = class_getInstanceMethod(sclClass, eSel);
+            Method sM = class_getInstanceMethod(sclClass, sSel);
+            if (eM && sM) {
+                method_exchangeImplementations(eM, sM);
+                NSLog(@"[WizardBypass] SWAPPED: %@ <-> %@", errorSelectors[i], successSelectors[i]);
+                swapped++;
             }
         }
+
+        // Also hook showTitle:title:subTitle:style: to log/change style
+        SEL showTitleSel = sel_registerName("showTitle:title:subTitle:style:closeButtonTitle:duration:");
+        Method showTitleMethod = class_getInstanceMethod(sclClass, showTitleSel);
+        if (showTitleMethod) {
+            __block IMP origShowTitle = method_getImplementation(showTitleMethod);
+            IMP newShowTitle = imp_implementationWithBlock(^id(id self, id vc, id title, id subtitle, long style, id closeBtn, double duration) {
+                // Style 2 = error, style 1 = success (typical SCLAlertView)
+                NSLog(@"[WizardBypass] SCL showTitle style=%ld title=%@ sub=%@", style, title, subtitle);
+                if (style == 2) { // error -> success
+                    style = 1;
+                    NSLog(@"[WizardBypass] *** REDIRECTED: error style -> success style ***");
+                }
+                return ((id (*)(id, SEL, id, id, id, long, id, double))origShowTitle)(self, showTitleSel, vc, title, subtitle, style, closeBtn, duration);
+            });
+            method_setImplementation(showTitleMethod, newShowTitle);
+            NSLog(@"[WizardBypass] HOOKED: showTitle:title:subTitle:style: (style redirect)");
+        }
+
+        // Hook the no-vc version too
+        SEL showTitle2Sel = sel_registerName("showTitle:subTitle:style:closeButtonTitle:duration:");
+        Method showTitle2Method = class_getInstanceMethod(sclClass, showTitle2Sel);
+        if (showTitle2Method) {
+            __block IMP origShowTitle2 = method_getImplementation(showTitle2Method);
+            IMP newShowTitle2 = imp_implementationWithBlock(^id(id self, id title, id subtitle, long style, id closeBtn, double duration) {
+                NSLog(@"[WizardBypass] SCL showTitle2 style=%ld title=%@ sub=%@", style, title, subtitle);
+                if (style == 2) {
+                    style = 1;
+                    NSLog(@"[WizardBypass] *** REDIRECTED: error style -> success style ***");
+                }
+                return ((id (*)(id, SEL, id, id, long, id, double))origShowTitle2)(self, showTitle2Sel, title, subtitle, style, closeBtn, duration);
+            });
+            method_setImplementation(showTitle2Method, newShowTitle2);
+            NSLog(@"[WizardBypass] HOOKED: showTitle:subTitle:style: (style redirect)");
+        }
+
+        NSLog(@"[WizardBypass] SCLAlertView: %d error<->success pairs swapped + style hooks", swapped);
     } else {
         NSLog(@"[WizardBypass] SCLAlertView NOT FOUND — checking for custom alert classes...");
         // Scan for any class with "Alert" or "SCL" in name
