@@ -174,7 +174,41 @@ static void delayed_hook(void) {
         }
     }
 
-    NSLog(@"[WizardBypass] v39 ready (anti-tamper catches: %d)", g_dead_catches);
+    NSLog(@"[WizardBypass] v39b ready (anti-tamper catches: %d)", g_dead_catches);
+
+    // ========================================
+    // PHASE 2: Trigger Wizard UI initialization
+    // Without this, the app freezes waiting for server
+    // ========================================
+
+    // Fake auth token
+    [[NSUserDefaults standardUserDefaults] setObject:@"premium" forKey:@"auth-token-type"];
+    NSLog(@"[WizardBypass] Faked auth-token-type -> premium");
+
+    // Create Wizard controller and trigger init
+    Class abvClass = objc_getClass("ABVJSMGADJS");
+    if (abvClass) {
+        id controller = [[abvClass alloc] init];
+        if (controller) {
+            NSLog(@"[WizardBypass] Created ABVJSMGADJS: %@", controller);
+
+            // Call PADSGFNDSAHJ (platform init)
+            SEL padSel = sel_registerName("PADSGFNDSAHJ");
+            if ([controller respondsToSelector:padSel]) {
+                ((void (*)(id, SEL))objc_msgSend)(controller, padSel);
+                NSLog(@"[WizardBypass] Called PADSGFNDSAHJ");
+            }
+
+            // Call IKAFHFDSAJ (show UI)
+            SEL ikaSel = sel_registerName("IKAFHFDSAJ");
+            if ([controller respondsToSelector:ikaSel]) {
+                ((void (*)(id, SEL))objc_msgSend)(controller, ikaSel);
+                NSLog(@"[WizardBypass] Called IKAFHFDSAJ");
+            }
+        }
+    } else {
+        NSLog(@"[WizardBypass] WARNING: ABVJSMGADJS not found");
+    }
 }
 
 // ============================================================================
