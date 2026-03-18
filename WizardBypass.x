@@ -294,7 +294,7 @@ static void hook_user_defaults(void) {
 // We just log what's shown so we can understand the auth flow.
 // ============================================================================
 
-static void hook_scl_alert_view(void) {
+static void __attribute__((unused)) hook_scl_alert_view(void) {
     NSLog(@"[WizardBypass] v31: SCLAlertView — passthrough logging only (NOT blocking)");
 
     Class cls = objc_getClass("SCLAlertView");
@@ -315,7 +315,7 @@ static void hook_scl_alert_view(void) {
 // PHASE 4B: HOOK UIAlertController
 // ============================================================================
 
-static void hook_ui_alert_controller(void) {
+static void __attribute__((unused)) hook_ui_alert_controller(void) {
     NSLog(@"[WizardBypass] Hooking UIAlertController...");
 
     Class alert_class = objc_getClass("UIAlertController");
@@ -356,7 +356,7 @@ static void hook_ui_alert_controller(void) {
 // PHASE 4B2: HOOK SCLAlertViewShowBuilder - The builder pattern
 // ============================================================================
 
-static void hook_scl_alert_view_show_builder(void) {
+static void __attribute__((unused)) hook_scl_alert_view_show_builder(void) {
     // v31: NO BLOCKING — let SCLAlertViewShowBuilder work normally
     // so Wizard's key entry UI flows through to completion
     NSLog(@"[WizardBypass] v31: SCLAlertViewShowBuilder — NOT hooking (let Wizard UI show)");
