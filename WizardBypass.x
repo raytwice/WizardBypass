@@ -759,6 +759,61 @@ static void delayed_hook(void) {
     }
 
     // ========================================
+    // v37: IDA-GUIDED BINARY PATCH
+    // Redirect error display (sub_B1F7F8 = showError "Invalid")
+    // to success display (sub_B1F270 = showSuccess "Valid")
+    // Both have identical signatures: void f(__int64 a1)
+    // ========================================
+    NSLog(@"[WizardBypass] ========================================");
+    NSLog(@"[WizardBypass] v37: IDA-GUIDED VALIDATION BYPASS");
+    NSLog(@"[WizardBypass] ========================================");
+
+    intptr_t wizard_slide = 0;
+    BOOL found_wizard = NO;
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (name && strstr(name, "Wizard")) {
+            wizard_slide = _dyld_get_image_vmaddr_slide(i);
+            NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
+            found_wizard = YES;
+            break;
+        }
+    }
+
+    if (found_wizard) {
+        // IDA addresses from static analysis:
+        uint64_t error_addr   = 0xB1F7F8 + wizard_slide;  // showError "Invalid"
+        uint64_t success_addr = 0xB1F270 + wizard_slide;  // showSuccess "Valid"
+
+        NSLog(@"[WizardBypass] Error:   0x%llx -> patching to Success: 0x%llx", error_addr, success_addr);
+
+        // ARM64 B instruction: 0x14000000 | (imm26)
+        // imm26 = (target - source) / 4
+        int64_t offset = (int64_t)(success_addr - error_addr);
+        int32_t imm26 = (int32_t)(offset / 4) & 0x03FFFFFF;
+        uint32_t branch_instr = 0x14000000 | imm26;
+
+        NSLog(@"[WizardBypass] ARM64 B instruction: 0x%08x (offset: %lld)", branch_instr, offset);
+
+        kern_return_t kr = vm_protect(mach_task_self(),
+            (vm_address_t)(error_addr & ~0xFFF), 0x1000, FALSE,
+            VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+
+        if (kr == KERN_SUCCESS) {
+            *(uint32_t *)error_addr = branch_instr;
+            sys_icache_invalidate((void *)error_addr, 4);
+            NSLog(@"[WizardBypass] *** PATCHED: Invalid->Valid redirect ACTIVE ***");
+            vm_protect(mach_task_self(),
+                (vm_address_t)(error_addr & ~0xFFF), 0x1000, FALSE,
+                VM_PROT_READ | VM_PROT_EXECUTE);
+        } else {
+            NSLog(@"[WizardBypass] vm_protect failed: %d", kr);
+        }
+    } else {
+        NSLog(@"[WizardBypass] WARNING: Wizard.framework not found!");
+    }
+
+    // ========================================
     // PHASE 7: CONTROLLER SETUP
     // v29b: API dump REMOVED from constructor (caused crash via CFNotification anti-tamper)
     // Dump will run on first tap instead, when Wizard is fully initialized
