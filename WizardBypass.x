@@ -12,6 +12,7 @@
 #import <libkern/OSCacheControl.h>
 #import <CommonCrypto/CommonCrypto.h>
 #import <Security/Security.h>
+#import <execinfo.h>
 
 // ============================================================================
 // GLOBAL: Wizard controller reference accessible from didTapIconView
