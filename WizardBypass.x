@@ -131,16 +131,15 @@ static void setup_draw_diagnostic(void) {
     }
 
     g_orig_drawInMTKView = method_getImplementation(drawMethod);
-    IMP diagDraw = imp_implementationWithBlock(^(id self, id view) {
+    IMP nopDraw = imp_implementationWithBlock(^(id self, id view) {
         g_draw_count++;
-        if (g_draw_count <= 3 || g_draw_count % 100 == 0) {
-            NSLog(@"[WizardBypass] DIAG: drawInMTKView called #%d", g_draw_count);
+        if (g_draw_count <= 3 || g_draw_count % 1000 == 0) {
+            NSLog(@"[WizardBypass] drawInMTKView NOP'd (call #%d)", g_draw_count);
         }
-        // Call original — signal handler protects from 0xDEAD
-        ((void (*)(id, SEL, id))g_orig_drawInMTKView)(self, sel_registerName("drawInMTKView:"), view);
+        // DO NOT call original — it infinite-loops (anti-tamper)
     });
-    method_setImplementation(drawMethod, diagDraw);
-    NSLog(@"[WizardBypass] DIAG: drawInMTKView: diagnostic hook installed");
+    method_setImplementation(drawMethod, nopDraw);
+    NSLog(@"[WizardBypass] drawInMTKView: NOP'd (anti-tamper infinite loop blocked)");
 }
 
 // ============================================================================
