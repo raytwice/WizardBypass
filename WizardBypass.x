@@ -562,7 +562,7 @@ static void hook_idle_timeout_kill(void) {
 // ============================================================================
 
 // Helper: is the caller from Wizard.framework?
-static BOOL caller_is_wizard(void) {
+static BOOL __attribute__((unused)) caller_is_wizard(void) {
     // Walk the call stack — check if any frame is in Wizard.framework
     void *frames[16];
     int count = backtrace(frames, 16);
