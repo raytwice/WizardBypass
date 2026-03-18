@@ -238,29 +238,93 @@ static void delayed_hook(void) {
     }
 
     if (found) {
-        NSLog(@"[WizardBypass] BINARY PATCH DISABLED FOR TESTING (slide: 0x%lx)", (long)wizard_slide);
-        // DISABLED: binary patch triggers code checksum anti-tamper
-        /*
-        uint64_t error_addr   = 0xB1F7F8 + wizard_slide;
-        uint64_t success_addr = 0xB1F270 + wizard_slide;
-        int64_t offset = (int64_t)(success_addr - error_addr);
-        int32_t imm26 = (int32_t)(offset / 4) & 0x03FFFFFF;
-        uint32_t branch_instr = 0x14000000 | imm26;
+        NSLog(@"[WizardBypass] Wizard slide: 0x%lx (NO binary patch — checksum protected)", (long)wizard_slide);
+    }
 
-        kern_return_t kr = vm_protect(mach_task_self(),
-            (vm_address_t)(error_addr & ~0xFFF), 0x1000, FALSE,
-            VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-        if (kr == KERN_SUCCESS) {
-            *(uint32_t *)error_addr = branch_instr;
-            sys_icache_invalidate((void *)error_addr, 4);
-            NSLog(@"[WizardBypass] PATCH: error->success ACTIVE");
-            vm_protect(mach_task_self(),
-                (vm_address_t)(error_addr & ~0xFFF), 0x1000, FALSE,
-                VM_PROT_READ | VM_PROT_EXECUTE);
-        } else {
-            NSLog(@"[WizardBypass] PATCH FAILED: %d", kr);
+    // ========================================
+    // HOOK-BASED BYPASS: SCLAlertView error -> success
+    // Instead of patching Wizard code (triggers checksum),
+    // hook SCLAlertView to redirect error displays to success
+    // ========================================
+    Class sclClass = objc_getClass("SCLAlertView");
+    if (sclClass) {
+        NSLog(@"[WizardBypass] Found SCLAlertView class");
+
+        // List all methods for diagnostics
+        unsigned int methodCount = 0;
+        Method *methods = class_copyMethodList(sclClass, &methodCount);
+        for (unsigned int i = 0; i < methodCount; i++) {
+            NSString *name = NSStringFromSelector(method_getName(methods[i]));
+            if ([name containsString:@"show"] || [name containsString:@"Show"] ||
+                [name containsString:@"error"] || [name containsString:@"Error"] ||
+                [name containsString:@"success"] || [name containsString:@"Success"]) {
+                NSLog(@"[WizardBypass] SCL method: %@", name);
+            }
         }
-        */
+        free(methods);
+
+        // Hook showError: -> redirect to showSuccess:
+        // SCLAlertView typically has: showError:subTitle:closeButtonTitle:duration:
+        // and showSuccess:subTitle:closeButtonTitle:duration:
+        SEL errorSel = sel_registerName("showError:");
+        SEL successSel = sel_registerName("showSuccess:");
+        Method errorMethod = class_getInstanceMethod(sclClass, errorSel);
+        Method successMethod = class_getInstanceMethod(sclClass, successSel);
+
+        if (errorMethod && successMethod) {
+            method_exchangeImplementations(errorMethod, successMethod);
+            NSLog(@"[WizardBypass] HOOKED: showError: <-> showSuccess: SWAPPED");
+        } else {
+            NSLog(@"[WizardBypass] showError:/showSuccess: not found, scanning variants...");
+
+            // Try common SCLAlertView method signatures
+            NSString *errorSelectors[] = {
+                @"showError:subTitle:closeButtonTitle:duration:",
+                @"showError:subTitle:completeText:duration:",
+                @"showError:subTitle:duration:",
+            };
+            NSString *successSelectors[] = {
+                @"showSuccess:subTitle:closeButtonTitle:duration:",
+                @"showSuccess:subTitle:completeText:duration:",
+                @"showSuccess:subTitle:duration:",
+            };
+
+            for (int i = 0; i < 3; i++) {
+                SEL eSel = sel_registerName([errorSelectors[i] UTF8String]);
+                SEL sSel = sel_registerName([successSelectors[i] UTF8String]);
+                Method eM = class_getInstanceMethod(sclClass, eSel);
+                Method sM = class_getInstanceMethod(sclClass, sSel);
+                if (eM && sM) {
+                    method_exchangeImplementations(eM, sM);
+                    NSLog(@"[WizardBypass] HOOKED: %@ <-> %@ SWAPPED", errorSelectors[i], successSelectors[i]);
+                }
+            }
+        }
+    } else {
+        NSLog(@"[WizardBypass] SCLAlertView NOT FOUND — checking for custom alert classes...");
+        // Scan for any class with "Alert" or "SCL" in name
+        unsigned int classCount = 0;
+        Class *classes = objc_copyClassList(&classCount);
+        for (unsigned int i = 0; i < classCount; i++) {
+            NSString *name = NSStringFromClass(classes[i]);
+            if ([name containsString:@"SCL"] || [name containsString:@"Alert"]) {
+                // Check if it's from Wizard
+                const char *imageName = class_getImageName(classes[i]);
+                if (imageName && strstr(imageName, "Wizard")) {
+                    NSLog(@"[WizardBypass] Wizard alert class: %@ (%s)", name, imageName);
+                }
+            }
+        }
+        free(classes);
+    }
+
+    // Also hook the success/error blocks via function pointer swap
+    // sub_B1F7F8 (error) and sub_B1F270 (success) — call success directly
+    if (found) {
+        uint64_t success_func = 0xB1F270 + wizard_slide;
+        uint64_t error_func   = 0xB1F7F8 + wizard_slide;
+        NSLog(@"[WizardBypass] Success func at: 0x%llx", success_func);
+        NSLog(@"[WizardBypass] Error func at: 0x%llx (NOT patched — checksum protected)", error_func);
     }
 
     NSLog(@"[WizardBypass] About to fake auth token...");
