@@ -132,17 +132,8 @@ static void setup_dylib_hiding(void) {
 static void delayed_hook(void) {
     NSLog(@"[WizardBypass] v39 delayed hook — applying binary patch");
 
-    // NOP drawInMTKView: (backup)
-    Class metalClass = objc_getClass("AJFADSHFSAJXN");
-    if (metalClass) {
-        SEL drawSel = sel_registerName("drawInMTKView:");
-        Method drawMethod = class_getInstanceMethod(metalClass, drawSel);
-        if (drawMethod) {
-            IMP nopDraw = imp_implementationWithBlock(^(id self, id view) {});
-            method_setImplementation(drawMethod, nopDraw);
-            NSLog(@"[WizardBypass] drawInMTKView: NOP'd");
-        }
-    }
+    // drawInMTKView: NOT NOP'd — signal handler catches 0xDEAD if needed
+    // NOP'ing it freezes the UI since it's also the render loop
 
     // Binary patch error->success
     intptr_t wizard_slide = 0;
@@ -199,17 +190,8 @@ static void wizard_bypass_init(void) {
     // SECOND: Hide our dylib
     setup_dylib_hiding();
 
-    // THIRD: NOP drawInMTKView: immediately
-    Class metalClass = objc_getClass("AJFADSHFSAJXN");
-    if (metalClass) {
-        SEL drawSel = sel_registerName("drawInMTKView:");
-        Method drawMethod = class_getInstanceMethod(metalClass, drawSel);
-        if (drawMethod) {
-            IMP nopDraw = imp_implementationWithBlock(^(id self, id view) {});
-            method_setImplementation(drawMethod, nopDraw);
-            NSLog(@"[WizardBypass] drawInMTKView: NOP'd (immediate)");
-        }
-    }
+    // drawInMTKView: left alone — signal handler catches 0xDEAD if it fires
+    NSLog(@"[WizardBypass] drawInMTKView: NOT NOP'd (signal handler protects)");
 
     // DELAYED: Binary patch
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
