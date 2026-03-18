@@ -702,9 +702,10 @@ static void delayed_hook(void) {
     BOOL found_wizard = NO;
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char *name = _dyld_get_image_name(i);
-        if (name && strstr(name, "Wizard")) {
+        if (name && strstr(name, "Wizard.framework/Wizard")) {
             wizard_slide = _dyld_get_image_vmaddr_slide(i);
-            NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
+            NSLog(@"[WizardBypass] Found: %s", name);
+            NSLog(@"[WizardBypass] Wizard.framework slide: 0x%lx", (long)wizard_slide);
             found_wizard = YES;
             break;
         }
