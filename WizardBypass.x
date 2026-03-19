@@ -314,6 +314,8 @@ static void delayed_hook(void) {
         }
     }
     
+    NSLog(@"[WizardBypass] PLIST scan complete. Found: %@", plistFound ? @"YES" : @"NO");
+
     NSLog(@"[WizardBypass] === DELAYED HOOK COMPLETE ===");
 }
 
