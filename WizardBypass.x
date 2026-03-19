@@ -251,9 +251,7 @@ static void delayed_hook(void) {
     //   outerKey: bytes at 1C249BC XOR'd → "Root"
     //   innerKey: bytes at 1C249C6 XOR'd → "state"
     //   Value: NSNumber(100) = authenticated
-    NSString *outerKey = @"Root";
-    NSString *innerKey = @"state";
-    
+    //   plist["Root"]["state"] = 100 (authenticated)
     NSLog(@"[WizardBypass] PLIST BYPASS: searching for Root/state plist...");
     
     NSFileManager *fm = [NSFileManager defaultManager];
