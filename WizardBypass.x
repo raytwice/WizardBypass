@@ -1,5 +1,5 @@
-// WizardBypass v40 - DIAGNOSTIC BUILD
-// Goal: find exactly what causes the freeze
+// WizardBypass v49 - PROJECT STAR
+// Clean ObjC auth bypass — zero code patching
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -108,48 +108,6 @@ static intptr_t hooked_dyld_get_image_vmaddr_slide(uint32_t idx) {
     return orig_dyld_get_image_vmaddr_slide(idx);
 }
 
-// ============================================================================
-// OPENDIR HOOK — intercept Wizard's license directory scan
-// sub_B27CAC calls opendir() on Documents/[computed-name]/
-// We create a plist with Root.state=100 there BEFORE it scans
-// ============================================================================
-#include <dirent.h>
-#include <sys/stat.h>
-
-static DIR* (*orig_opendir)(const char *);
-
-static DIR* hooked_opendir(const char *path) {
-    if (path) {
-        // Check if this is a Documents subdirectory (not __user_defaults__)
-        NSString *p = [NSString stringWithUTF8String:path];
-        NSString *docs = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
-        
-        if ([p hasPrefix:docs] && ![p isEqualToString:docs] && 
-            ![p containsString:@"__user_defaults__"]) {
-            
-            NSLog(@"[WizardBypass] *** OPENDIR INTERCEPTED: %@ ***", p);
-            
-            // This is likely Wizard's license directory!
-            // Create a plist with Root.state=100 here
-            NSString *licensePath = [p stringByAppendingPathComponent:@"license.plist"];
-            NSFileManager *fm = [NSFileManager defaultManager];
-            
-            // Create the directory if needed
-            [fm createDirectoryAtPath:p withIntermediateDirectories:YES attributes:nil error:nil];
-            
-            // Create plist with Root.state = 100
-            NSDictionary *plist = @{
-                @"Root": @{
-                    @"state": @100
-                }
-            };
-            BOOL written = [plist writeToFile:licensePath atomically:YES];
-            NSLog(@"[WizardBypass] Created license plist: %@ (written: %@)", licensePath, written ? @"YES" : @"NO");
-        }
-    }
-    return orig_opendir(path);
-}
-
 static void setup_dylib_hiding(void) {
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
@@ -164,10 +122,9 @@ static void setup_dylib_hiding(void) {
         {"_dyld_get_image_name", (void *)hooked_dyld_get_image_name, (void **)&orig_dyld_get_image_name},
         {"_dyld_get_image_header", (void *)hooked_dyld_get_image_header, (void **)&orig_dyld_get_image_header},
         {"_dyld_get_image_vmaddr_slide", (void *)hooked_dyld_get_image_vmaddr_slide, (void **)&orig_dyld_get_image_vmaddr_slide},
-        {"opendir", (void *)hooked_opendir, (void **)&orig_opendir},
     };
-    rebind_symbols(rebindings, 5);
-    NSLog(@"[WizardBypass] Dylib hiding + opendir hook active (idx: %u)", g_hidden_index);
+    rebind_symbols(rebindings, 4);
+    NSLog(@"[WizardBypass] Dylib hiding active (idx: %u)", g_hidden_index);
 }
 
 // ============================================================================
@@ -283,34 +240,41 @@ static void delayed_hook(void) {
         NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
         
         // ========================================
-        // NOP the TBZ in sub_B28518 (DECISION FUNCTION)
-        // IDA: void __usercall sub_B28518(char a1@<W8>, __int64 a2@<X0>)
-        //   if (W8 & 1 == 0) sub_1AF600(X0);  // error (noreturn)
-        //   sub_315C80(X0);                     // success
-        // First insn: TBZ W8, #0, <error> (0x3600e9e8)
-        // Second insn: B <success> (0x17dfb5d9)
-        // NOP the TBZ → always falls through to B <success>
+        // PROJECT STAR — CLEAN OBJC AUTH BYPASS
+        // From IDA deep dive:
+        //   byte_1B0B4A9 = auth flag (in __data, already writable)
+        //   +[ABVJSMGADJS ANDASFJSGX] = singleton accessor
+        //   -[ABVJSMGADJS ASFGAHJFAHS] = starts menu (30fps timer → PADSGFNDSAHJ)
+        //   -[ABVJSMGADJS PADSGFNDSAHJ] = UI refresh, checks byte_1B0B4A9 for buttons
+        // ZERO code patching — pure data write + ObjC calls
         // ========================================
         
-        uint64_t tbz_addr = (uint64_t)wizard_slide + 0xB28518;
-        uint32_t *insn_ptr = (uint32_t *)tbz_addr;
+        // Step 1: Set auth flag in __data section
+        uint8_t *auth_flag = (uint8_t *)((uint64_t)wizard_slide + 0x1B0B4A9);
+        uint8_t old_val = *auth_flag;
+        *auth_flag = 1;
+        NSLog(@"[WizardBypass] AUTH FLAG (byte_1B0B4A9): %d → 1", old_val);
         
-        NSLog(@"[WizardBypass] Patching TBZ at 0x%llx", (unsigned long long)tbz_addr);
-        NSLog(@"[WizardBypass] Before: [0]=0x%08x [1]=0x%08x", insn_ptr[0], insn_ptr[1]);
-        
-        kern_return_t kr = vm_protect(mach_task_self(),
-                                       (vm_address_t)(tbz_addr & ~0xFFF),
-                                       0x1000, NO,
-                                       VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-        
-        if (kr == KERN_SUCCESS) {
-            // NOP = 0xD503201F on ARM64
-            insn_ptr[0] = 0xD503201F;
-            sys_icache_invalidate((void *)tbz_addr, 8);
-            NSLog(@"[WizardBypass] *** TBZ NOP'd! Error branch DISABLED ***");
-            NSLog(@"[WizardBypass] After: [0]=0x%08x [1]=0x%08x", insn_ptr[0], insn_ptr[1]);
+        // Step 2: Get ABVJSMGADJS singleton
+        Class wizardClass = objc_getClass("ABVJSMGADJS");
+        if (wizardClass) {
+            NSLog(@"[WizardBypass] ABVJSMGADJS class found");
+            
+            SEL singletonSel = sel_registerName("ANDASFJSGX");
+            id instance = ((id (*)(Class, SEL))objc_msgSend)(wizardClass, singletonSel);
+            
+            if (instance) {
+                NSLog(@"[WizardBypass] Singleton instance: %p", instance);
+                
+                // Step 3: Start the menu timer
+                SEL startSel = sel_registerName("ASFGAHJFAHS");
+                ((void (*)(id, SEL))objc_msgSend)(instance, startSel);
+                NSLog(@"[WizardBypass] *** ASFGAHJFAHS CALLED — MENU STARTED ***");
+            } else {
+                NSLog(@"[WizardBypass] ERROR: singleton returned nil!");
+            }
         } else {
-            NSLog(@"[WizardBypass] vm_protect FAILED: %d", kr);
+            NSLog(@"[WizardBypass] ERROR: ABVJSMGADJS class not found!");
         }
     }
 
@@ -322,7 +286,7 @@ static void delayed_hook(void) {
 // ============================================================================
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizardBypass] === v43 CLEAN BUILD (plist bypass only) ===");
+    NSLog(@"[WizardBypass] === v49 PROJECT STAR (ObjC auth bypass) ===");
 
     // Signal handler first
     struct sigaction sa;
