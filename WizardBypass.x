@@ -1,4 +1,4 @@
-// WizardBypass v49 - PROJECT STAR
+// WizardBypass v50 - PROJECT STAR v2
 // Clean ObjC auth bypass — zero code patching
 
 #import <Foundation/Foundation.h>
@@ -240,12 +240,18 @@ static void delayed_hook(void) {
         NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
         
         // ========================================
-        // PROJECT STAR — CLEAN OBJC AUTH BYPASS
-        // From IDA deep dive:
-        //   byte_1B0B4A9 = auth flag (in __data, already writable)
+        // PROJECT STAR v2 — CALL IKAFHFDSAJ (the MENU BUILDER)
+        // From IDA deep dive (25K-line decompilation):
+        //   byte_1B0B4A9 = auth flag (gates access in didTapIconView)
         //   +[ABVJSMGADJS ANDASFJSGX] = singleton accessor
-        //   -[ABVJSMGADJS ASFGAHJFAHS] = starts menu (30fps timer → PADSGFNDSAHJ)
-        //   -[ABVJSMGADJS PADSGFNDSAHJ] = UI refresh, checks byte_1B0B4A9 for buttons
+        //   -[ABVJSMGADJS IKAFHFDSAJ] = COMPLETE MENU BUILDER:
+        //     1. Decrypts all UI strings (3 obfuscated loops)
+        //     2. Creates 5 menu views (jdsghadurewmf, pJMSAFHSJSFV,
+        //        AYtPSMFSKdfj, naJFSAKFNSMN, AYmpXkdajwND)
+        //     3. Adds them to keyWindow
+        //     4. Calls ASFGAHJFAHS internally (starts 30fps timer)
+        //   v49 BUG: called ASFGAHJFAHS directly → timer started
+        //     but menu views were never created!
         // ZERO code patching — pure data write + ObjC calls
         // ========================================
         
@@ -266,10 +272,17 @@ static void delayed_hook(void) {
             if (instance) {
                 NSLog(@"[WizardBypass] Singleton instance: %p", instance);
                 
-                // Step 3: Start the menu timer
-                SEL startSel = sel_registerName("ASFGAHJFAHS");
-                ((void (*)(id, SEL))objc_msgSend)(instance, startSel);
-                NSLog(@"[WizardBypass] *** ASFGAHJFAHS CALLED — MENU STARTED ***");
+                // Step 3: Call IKAFHFDSAJ — the COMPLETE menu builder
+                // This function:
+                //   - Checks pJMSAFHSJSFV superview (first call → falls through)
+                //   - Builds full key entry UI (UITextField, container)
+                //   - Decrypts all menu strings (3 obfuscated loops, deterministic)
+                //   - Creates and adds 5 menu views to keyWindow
+                //   - Calls ASFGAHJFAHS internally (starts timer)
+                SEL menuBuilderSel = sel_registerName("IKAFHFDSAJ");
+                NSLog(@"[WizardBypass] Calling IKAFHFDSAJ (menu builder)...");
+                ((void (*)(id, SEL))objc_msgSend)(instance, menuBuilderSel);
+                NSLog(@"[WizardBypass] *** IKAFHFDSAJ COMPLETE — MENU SHOULD BE VISIBLE ***");
             } else {
                 NSLog(@"[WizardBypass] ERROR: singleton returned nil!");
             }
@@ -286,7 +299,7 @@ static void delayed_hook(void) {
 // ============================================================================
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizardBypass] === v49 PROJECT STAR (ObjC auth bypass) ===");
+    NSLog(@"[WizardBypass] === v50 PROJECT STAR v2 (IKAFHFDSAJ menu builder) ===");
 
     // Signal handler first
     struct sigaction sa;
@@ -309,7 +322,8 @@ static void wizard_bypass_init(void) {
     start_watchdog();
 
     // Delayed hook in 3 seconds
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+    // Longer delay (5s) to ensure app and Wizard framework are fully loaded
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         delayed_hook();
     });
