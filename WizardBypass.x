@@ -254,63 +254,64 @@ static void delayed_hook(void) {
     NSString *outerKey = @"Root";
     NSString *innerKey = @"state";
     
-    NSLog(@"[WizardBypass] PLIST BYPASS: searching for license plist...");
-    NSLog(@"[WizardBypass]   outerKey length=%lu, innerKey length=%lu", 
-        (unsigned long)outerKey.length, (unsigned long)innerKey.length);
+    NSLog(@"[WizardBypass] PLIST BYPASS: searching for Root/state plist...");
     
-    // Scan directories for plist files
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *homeDir = NSHomeDirectory();
-    NSArray *searchDirs = @[
-        [homeDir stringByAppendingPathComponent:@"Library/Preferences"],
-        [homeDir stringByAppendingPathComponent:@"Library"],
-        [homeDir stringByAppendingPathComponent:@"Documents"],
-        [homeDir stringByAppendingPathComponent:@"Library/Application Support"],
+    NSString *bundleDir = [[NSBundle mainBundle] bundlePath];
+    
+    // Scan these root dirs recursively
+    NSArray *rootDirs = @[
         homeDir,
+        bundleDir,
+        [bundleDir stringByAppendingPathComponent:@"Frameworks/Wizard.framework"],
     ];
     
     BOOL plistFound = NO;
-    for (NSString *dir in searchDirs) {
-        NSArray *files = [fm contentsOfDirectoryAtPath:dir error:nil];
-        for (NSString *file in files) {
-            if (![file hasSuffix:@".plist"]) continue;
+    for (NSString *rootDir in rootDirs) {
+        NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:rootDir];
+        NSString *relativePath;
+        int fileCount = 0;
+        while ((relativePath = [enumerator nextObject])) {
+            NSString *fullPath = [rootDir stringByAppendingPathComponent:relativePath];
             
-            NSString *fullPath = [dir stringByAppendingPathComponent:file];
+            // Skip directories
+            BOOL isDir = NO;
+            [fm fileExistsAtPath:fullPath isDirectory:&isDir];
+            if (isDir) continue;
+            
+            // Try to parse ANY file as a plist
             NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:fullPath];
             if (!dict) continue;
             
-            // Log all plist files for diagnostics
-            NSLog(@"[WizardBypass] PLIST: %@ (keys: %lu)", fullPath, (unsigned long)dict.allKeys.count);
+            fileCount++;
             
-            // Check if this plist has our outer key
-            id outerVal = dict[outerKey];
-            if (outerVal) {
-                NSLog(@"[WizardBypass] *** FOUND LICENSE PLIST: %@ ***", fullPath);
-                NSLog(@"[WizardBypass]   outerVal type: %@", [outerVal class]);
+            // Check for Root key
+            id rootVal = dict[@"Root"];
+            if (rootVal) {
+                NSLog(@"[WizardBypass] *** FOUND 'Root' KEY in: %@ ***", fullPath);
+                NSLog(@"[WizardBypass]   Root type: %@, value: %@", [rootVal class], rootVal);
                 
-                if ([outerVal isKindOfClass:[NSDictionary class]]) {
-                    NSMutableDictionary *inner = [outerVal mutableCopy];
-                    id currentVal = inner[innerKey];
-                    NSLog(@"[WizardBypass]   current innerKey value: %@", currentVal);
+                if ([rootVal isKindOfClass:[NSDictionary class]]) {
+                    NSMutableDictionary *inner = [rootVal mutableCopy];
+                    id stateVal = inner[@"state"];
+                    NSLog(@"[WizardBypass]   state = %@", stateVal);
                     
-                    // Set to 100 (authenticated)
-                    inner[innerKey] = @100;
-                    dict[outerKey] = inner;
-                } else {
-                    // Outer value exists but isn't a dict — set nested structure
-                    dict[outerKey] = @{innerKey: @100};
+                    inner[@"state"] = @100;
+                    dict[@"Root"] = inner;
+                    BOOL ok = [dict writeToFile:fullPath atomically:YES];
+                    NSLog(@"[WizardBypass]   SET state=100, written: %@", ok ? @"YES" : @"NO");
+                } else if ([rootVal isKindOfClass:[NSNumber class]]) {
+                    NSLog(@"[WizardBypass]   Root is number: %@", rootVal);
                 }
-                
-                BOOL written = [dict writeToFile:fullPath atomically:YES];
-                NSLog(@"[WizardBypass]   Written with value 100: %@", written ? @"YES" : @"NO");
                 plistFound = YES;
             }
             
-            // Also dump ALL keys for any plist with non-standard key names
-            for (NSString *key in dict.allKeys) {
-                if (key.length <= 10 && key.length >= 3) {
-                    // Log short keys that might be encrypted
-                    NSLog(@"[WizardBypass]   KEY: [%@] len=%lu", key, (unsigned long)key.length);
+            // Log ALL parseable files with their keys
+            if (fileCount <= 50) {
+                NSLog(@"[WizardBypass] FILE: %@ (keys: %lu)", fullPath, (unsigned long)dict.allKeys.count);
+                for (NSString *key in dict.allKeys) {
+                    NSLog(@"[WizardBypass]   [%@] = %@", key, [[dict[key] description] substringToIndex:MIN(80, [[dict[key] description] length])]);
                 }
             }
         }
