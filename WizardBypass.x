@@ -281,6 +281,54 @@ static void delayed_hook(void) {
 
     if (found) {
         NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
+        
+        // ========================================
+        // INLINE HOOK on sub_B28518 (DECISION FUNCTION)
+        // From IDA: checks (a1 & 1) → success or error path
+        // We patch the function to force a1 | 1 (success)
+        // No CydiaSubstrate — manual ARM64 hook
+        // ========================================
+        
+        // sub_B28518 address in memory
+        uint64_t func_addr = (uint64_t)wizard_slide + 0xB28518;
+        NSLog(@"[WizardBypass] Decision func at: 0x%llx", (unsigned long long)func_addr);
+        
+        // Read current instruction for diagnostics
+        uint32_t *func_ptr = (uint32_t *)func_addr;
+        NSLog(@"[WizardBypass] First instructions: 0x%08x 0x%08x 0x%08x 0x%08x", 
+            func_ptr[0], func_ptr[1], func_ptr[2], func_ptr[3]);
+        
+        // Make the page writable
+        kern_return_t kr = vm_protect(mach_task_self(),
+                                       (vm_address_t)(func_addr & ~0xFFF),
+                                       0x1000,
+                                       NO,
+                                       VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+        
+        if (kr == KERN_SUCCESS) {
+            NSLog(@"[WizardBypass] Page made writable!");
+            
+            // sub_B28518 checks (a1 & 1) where a1 is in X0
+            // ARM64: ORR X0, X0, #1  = force bit 0 = 1
+            // Encoding: 0xB2400000
+            // We insert this as the FIRST instruction, then the original code runs
+            // But we need to preserve the original first instruction
+            
+            // Save original first instruction
+            uint32_t orig_insn = func_ptr[0];
+            
+            // Write: ORR X0, X0, #1 (force success bit)
+            func_ptr[0] = 0xB2400000;  // ORR X0, X0, #1
+            
+            // Flush instruction cache
+            sys_icache_invalidate((void *)func_addr, 16);
+            
+            NSLog(@"[WizardBypass] *** PATCHED sub_B28518: ORR X0, X0, #1 ***");
+            NSLog(@"[WizardBypass] Original insn was: 0x%08x", orig_insn);
+            NSLog(@"[WizardBypass] New first insn: 0x%08x", func_ptr[0]);
+        } else {
+            NSLog(@"[WizardBypass] vm_protect FAILED: %d", kr);
+        }
     }
 
     NSLog(@"[WizardBypass] === DELAYED HOOK COMPLETE ===");
