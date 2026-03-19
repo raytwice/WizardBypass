@@ -242,6 +242,83 @@ static void delayed_hook(void) {
     }
 
     // ========================================
+    // PLIST AUTH BYPASS (from IDA sub_B27940)
+    // The license state is stored in a plist file:
+    //   outerKey[innerKey] = NSNumber(100) = authenticated
+    // Scan all plists in the app sandbox to find and modify it
+    // ========================================
+    
+    // The encrypted CFSTR keys from IDA (used as NSDictionary keys in the plist)
+    NSString *outerKey = [NSString stringWithFormat:@"%c%c%c%c%c", 0xC5, 0x5B, 0x21, 0xB1, 0x1A];
+    NSString *innerKey = [NSString stringWithFormat:@"%c%c%c%c%c%c", 0x98, 0x3E, 0x28, 0xDA, 0x9C, 0x39];
+    
+    NSLog(@"[WizardBypass] PLIST BYPASS: searching for license plist...");
+    NSLog(@"[WizardBypass]   outerKey length=%lu, innerKey length=%lu", 
+        (unsigned long)outerKey.length, (unsigned long)innerKey.length);
+    
+    // Scan directories for plist files
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *homeDir = NSHomeDirectory();
+    NSArray *searchDirs = @[
+        [homeDir stringByAppendingPathComponent:@"Library/Preferences"],
+        [homeDir stringByAppendingPathComponent:@"Library"],
+        [homeDir stringByAppendingPathComponent:@"Documents"],
+        [homeDir stringByAppendingPathComponent:@"Library/Application Support"],
+        homeDir,
+    ];
+    
+    BOOL plistFound = NO;
+    for (NSString *dir in searchDirs) {
+        NSArray *files = [fm contentsOfDirectoryAtPath:dir error:nil];
+        for (NSString *file in files) {
+            if (![file hasSuffix:@".plist"]) continue;
+            
+            NSString *fullPath = [dir stringByAppendingPathComponent:file];
+            NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:fullPath];
+            if (!dict) continue;
+            
+            // Log all plist files for diagnostics
+            NSLog(@"[WizardBypass] PLIST: %@ (keys: %lu)", fullPath, (unsigned long)dict.allKeys.count);
+            
+            // Check if this plist has our outer key
+            id outerVal = dict[outerKey];
+            if (outerVal) {
+                NSLog(@"[WizardBypass] *** FOUND LICENSE PLIST: %@ ***", fullPath);
+                NSLog(@"[WizardBypass]   outerVal type: %@", [outerVal class]);
+                
+                if ([outerVal isKindOfClass:[NSDictionary class]]) {
+                    NSMutableDictionary *inner = [outerVal mutableCopy];
+                    id currentVal = inner[innerKey];
+                    NSLog(@"[WizardBypass]   current innerKey value: %@", currentVal);
+                    
+                    // Set to 100 (authenticated)
+                    inner[innerKey] = @100;
+                    dict[outerKey] = inner;
+                } else {
+                    // Outer value exists but isn't a dict — set nested structure
+                    dict[outerKey] = @{innerKey: @100};
+                }
+                
+                BOOL written = [dict writeToFile:fullPath atomically:YES];
+                NSLog(@"[WizardBypass]   Written with value 100: %@", written ? @"YES" : @"NO");
+                plistFound = YES;
+            }
+            
+            // Also dump ALL keys for any plist with non-standard key names
+            for (NSString *key in dict.allKeys) {
+                if (key.length <= 10 && key.length >= 3) {
+                    // Log short keys that might be encrypted
+                    NSLog(@"[WizardBypass]   KEY: [%@] len=%lu", key, (unsigned long)key.length);
+                }
+            }
+        }
+    }
+    
+    if (!plistFound) {
+        NSLog(@"[WizardBypass] License plist NOT found — will dump all plists for analysis");
+    }
+
+    // ========================================
     // SCAN WIZARD CLASSES for auth methods
     // ========================================
     NSString *wizardClasses[] = {@"ABVJSMGADJS", @"Kmsjfaigh", @"Mjshjgkash", @"AJFADSHFSAJXN", @"Pajdsakdfj"};
