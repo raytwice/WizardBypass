@@ -186,8 +186,8 @@ static void start_watchdog(void) {
     });
 }
 
-/*
-// drawInMTKView NOP - disabled, menu needs Metal rendering
+// drawInMTKView NOP — prevents anti-tamper infinite loop.
+// Menu is UIKit-based (5 views added to keyWindow), doesn't need Metal.
 static int g_draw_count = 0;
 static IMP g_orig_drawInMTKView = NULL;
 
@@ -214,7 +214,6 @@ static void setup_draw_diagnostic(void) {
     method_setImplementation(drawMethod, nopDraw);
     NSLog(@"[WizardBypass] drawInMTKView: NOP'd (anti-tamper infinite loop blocked)");
 }
-*/
 
 // ============================================================================
 // DELAYED HOOK
@@ -314,9 +313,9 @@ static void wizard_bypass_init(void) {
     // Dylib hiding
     setup_dylib_hiding();
 
-    // drawInMTKView NOT NOP'd — menu needs Metal rendering
-    // Signal handler protects if anti-tamper fires
-    // setup_draw_diagnostic();
+    // NOP drawInMTKView — prevents anti-tamper infinite loop that freezes main thread
+    // Menu is UIKit-based, doesn't need Metal rendering
+    setup_draw_diagnostic();
 
     // Watchdog (background thread)
     start_watchdog();
