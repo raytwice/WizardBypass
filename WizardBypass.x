@@ -247,9 +247,12 @@ static void delayed_hook(void) {
     // Scan all plists in the app sandbox to find and modify it
     // ========================================
     
-    // The encrypted CFSTR keys from IDA (used as NSDictionary keys in the plist)
-    NSString *outerKey = [NSString stringWithFormat:@"%c%c%c%c%c", 0xC5, 0x5B, 0x21, 0xB1, 0x1A];
-    NSString *innerKey = [NSString stringWithFormat:@"%c%c%c%c%c%c", 0x98, 0x3E, 0x28, 0xDA, 0x9C, 0x39];
+    // Keys decrypted from IDA (sub_B27940 XOR decryption):
+    //   outerKey: bytes at 1C249BC XOR'd → "Root"
+    //   innerKey: bytes at 1C249C6 XOR'd → "state"
+    //   Value: NSNumber(100) = authenticated
+    NSString *outerKey = @"Root";
+    NSString *innerKey = @"state";
     
     NSLog(@"[WizardBypass] PLIST BYPASS: searching for license plist...");
     NSLog(@"[WizardBypass]   outerKey length=%lu, innerKey length=%lu", 
