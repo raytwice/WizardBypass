@@ -337,8 +337,9 @@ static void wizard_bypass_init(void) {
     // Dylib hiding
     setup_dylib_hiding();
 
-    // Diagnostic hook on drawInMTKView
-    setup_draw_diagnostic();
+    // drawInMTKView NOT NOP'd — menu needs Metal rendering
+    // Signal handler protects if anti-tamper fires
+    // setup_draw_diagnostic();
 
     // Watchdog (background thread)
     start_watchdog();
