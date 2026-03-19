@@ -108,6 +108,48 @@ static intptr_t hooked_dyld_get_image_vmaddr_slide(uint32_t idx) {
     return orig_dyld_get_image_vmaddr_slide(idx);
 }
 
+// ============================================================================
+// OPENDIR HOOK — intercept Wizard's license directory scan
+// sub_B27CAC calls opendir() on Documents/[computed-name]/
+// We create a plist with Root.state=100 there BEFORE it scans
+// ============================================================================
+#include <dirent.h>
+#include <sys/stat.h>
+
+static DIR* (*orig_opendir)(const char *);
+
+static DIR* hooked_opendir(const char *path) {
+    if (path) {
+        // Check if this is a Documents subdirectory (not __user_defaults__)
+        NSString *p = [NSString stringWithUTF8String:path];
+        NSString *docs = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
+        
+        if ([p hasPrefix:docs] && ![p isEqualToString:docs] && 
+            ![p containsString:@"__user_defaults__"]) {
+            
+            NSLog(@"[WizardBypass] *** OPENDIR INTERCEPTED: %@ ***", p);
+            
+            // This is likely Wizard's license directory!
+            // Create a plist with Root.state=100 here
+            NSString *licensePath = [p stringByAppendingPathComponent:@"license.plist"];
+            NSFileManager *fm = [NSFileManager defaultManager];
+            
+            // Create the directory if needed
+            [fm createDirectoryAtPath:p withIntermediateDirectories:YES attributes:nil error:nil];
+            
+            // Create plist with Root.state = 100
+            NSDictionary *plist = @{
+                @"Root": @{
+                    @"state": @100
+                }
+            };
+            BOOL written = [plist writeToFile:licensePath atomically:YES];
+            NSLog(@"[WizardBypass] Created license plist: %@ (written: %@)", licensePath, written ? @"YES" : @"NO");
+        }
+    }
+    return orig_opendir(path);
+}
+
 static void setup_dylib_hiding(void) {
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
@@ -122,9 +164,10 @@ static void setup_dylib_hiding(void) {
         {"_dyld_get_image_name", (void *)hooked_dyld_get_image_name, (void **)&orig_dyld_get_image_name},
         {"_dyld_get_image_header", (void *)hooked_dyld_get_image_header, (void **)&orig_dyld_get_image_header},
         {"_dyld_get_image_vmaddr_slide", (void *)hooked_dyld_get_image_vmaddr_slide, (void **)&orig_dyld_get_image_vmaddr_slide},
+        {"opendir", (void *)hooked_opendir, (void **)&orig_opendir},
     };
-    rebind_symbols(rebindings, 4);
-    NSLog(@"[WizardBypass] Dylib hiding active (idx: %u)", g_hidden_index);
+    rebind_symbols(rebindings, 5);
+    NSLog(@"[WizardBypass] Dylib hiding + opendir hook active (idx: %u)", g_hidden_index);
 }
 
 // ============================================================================
@@ -239,83 +282,6 @@ static void delayed_hook(void) {
     if (found) {
         NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
     }
-
-    // ========================================
-    // PLIST AUTH BYPASS (from IDA sub_B27940)
-    // The license state is stored in a plist file:
-    //   outerKey[innerKey] = NSNumber(100) = authenticated
-    // Scan all plists in the app sandbox to find and modify it
-    // ========================================
-    
-    // Keys decrypted from IDA (sub_B27940 XOR decryption):
-    //   outerKey: bytes at 1C249BC XOR'd → "Root"
-    //   innerKey: bytes at 1C249C6 XOR'd → "state"
-    //   Value: NSNumber(100) = authenticated
-    //   plist["Root"]["state"] = 100 (authenticated)
-    NSLog(@"[WizardBypass] PLIST BYPASS: searching for Root/state plist...");
-    
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *homeDir = NSHomeDirectory();
-    NSString *bundleDir = [[NSBundle mainBundle] bundlePath];
-    
-    // Scan these root dirs recursively
-    NSArray *rootDirs = @[
-        homeDir,
-        bundleDir,
-        [bundleDir stringByAppendingPathComponent:@"Frameworks/Wizard.framework"],
-    ];
-    
-    BOOL plistFound = NO;
-    for (NSString *rootDir in rootDirs) {
-        NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:rootDir];
-        NSString *relativePath;
-        int fileCount = 0;
-        while ((relativePath = [enumerator nextObject])) {
-            NSString *fullPath = [rootDir stringByAppendingPathComponent:relativePath];
-            
-            // Skip directories
-            BOOL isDir = NO;
-            [fm fileExistsAtPath:fullPath isDirectory:&isDir];
-            if (isDir) continue;
-            
-            // Try to parse ANY file as a plist
-            NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:fullPath];
-            if (!dict) continue;
-            
-            fileCount++;
-            
-            // Check for Root key
-            id rootVal = dict[@"Root"];
-            if (rootVal) {
-                NSLog(@"[WizardBypass] *** FOUND 'Root' KEY in: %@ ***", fullPath);
-                NSLog(@"[WizardBypass]   Root type: %@, value: %@", [rootVal class], rootVal);
-                
-                if ([rootVal isKindOfClass:[NSDictionary class]]) {
-                    NSMutableDictionary *inner = [rootVal mutableCopy];
-                    id stateVal = inner[@"state"];
-                    NSLog(@"[WizardBypass]   state = %@", stateVal);
-                    
-                    inner[@"state"] = @100;
-                    dict[@"Root"] = inner;
-                    BOOL ok = [dict writeToFile:fullPath atomically:YES];
-                    NSLog(@"[WizardBypass]   SET state=100, written: %@", ok ? @"YES" : @"NO");
-                } else if ([rootVal isKindOfClass:[NSNumber class]]) {
-                    NSLog(@"[WizardBypass]   Root is number: %@", rootVal);
-                }
-                plistFound = YES;
-            }
-            
-            // Log ALL parseable files with their keys
-            if (fileCount <= 50) {
-                NSLog(@"[WizardBypass] FILE: %@ (keys: %lu)", fullPath, (unsigned long)dict.allKeys.count);
-                for (NSString *key in dict.allKeys) {
-                    NSLog(@"[WizardBypass]   [%@] = %@", key, [[dict[key] description] substringToIndex:MIN(80, [[dict[key] description] length])]);
-                }
-            }
-        }
-    }
-    
-    NSLog(@"[WizardBypass] PLIST scan complete. Found: %@", plistFound ? @"YES" : @"NO");
 
     NSLog(@"[WizardBypass] === DELAYED HOOK COMPLETE ===");
 }
