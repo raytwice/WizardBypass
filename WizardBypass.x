@@ -178,7 +178,7 @@ static void start_watchdog(intptr_t wizard_slide) {
 // ============================================================================
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizardBypass] === v51 CLEAN DIAGNOSTIC BUILD ===");
+    NSLog(@"[WizardBypass] === v52 DIAGNOSTIC + AUTH ENFORCER ===");
 
     // 1. Signal handler (anti-tamper protection)
     struct sigaction sa;
@@ -222,18 +222,13 @@ static void wizard_bypass_init(void) {
 
         NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
 
-        // Read current auth state
+        // Set auth flag = 1
         uint8_t *auth_flag = (uint8_t *)((uint64_t)wizard_slide + 0x1B0B4A9);
         NSLog(@"[WizardBypass] byte_1B0B4A9 BEFORE: %d", *auth_flag);
-
-        // Set auth flag = 1 (bypass)
-        // VULNERABILITY: auth state stored in writable __data with no integrity check.
-        // sub_81E8B0 (license processor) writes this via ASN1 cert parsing,
-        // but the result sits unprotected — we can overwrite it.
         *auth_flag = 1;
         NSLog(@"[WizardBypass] byte_1B0B4A9 AFTER: %d", *auth_flag);
 
-        // Dump nearby bytes for diagnostics
+        // Dump config region
         uint8_t *base = (uint8_t *)((uint64_t)wizard_slide + 0x1B0B470);
         NSLog(@"[WizardBypass] xmmword_1B0B470 dump:");
         NSLog(@"[WizardBypass]   +0x00: %02X %02X %02X %02X %02X %02X %02X %02X",
@@ -241,7 +236,33 @@ static void wizard_bypass_init(void) {
         NSLog(@"[WizardBypass]   +0x38: %02X [%02X] %02X %02X (byte_1B0B4A9 = [%02X])",
               base[0x38], base[0x39], base[0x3A], base[0x3B], base[0x39]);
 
-        NSLog(@"[WizardBypass] === BYPASS APPLIED — tap the icon to open menu ===");
+        // ================================================================
+        // AUTH ENFORCER — background timer that keeps byte_1B0B4A9 = 1
+        // sub_81E8B0 (license processor) resets it to 0 on every key submit.
+        // We run from a BG thread so it works even if main thread is blocked.
+        // ================================================================
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            static int enforce_count = 0;
+            static int restore_count = 0;
+            uint8_t *flag = (uint8_t *)((uint64_t)wizard_slide + 0x1B0B4A9);
+            
+            NSLog(@"[WizardBypass] AUTH ENFORCER started (50ms interval)");
+            while (1) {
+                usleep(50000); // 50ms = 20 checks/sec
+                if (*flag != 1) {
+                    *flag = 1;
+                    restore_count++;
+                    NSLog(@"[WizardBypass] AUTH ENFORCER: restored byte_1B0B4A9 = 1 (#%d)", restore_count);
+                }
+                enforce_count++;
+                if (enforce_count % 200 == 0) { // Log every 10s
+                    NSLog(@"[WizardBypass] AUTH ENFORCER alive (%d checks, %d restores)", 
+                          enforce_count, restore_count);
+                }
+            }
+        });
+
+        NSLog(@"[WizardBypass] === BYPASS + ENFORCER ACTIVE ===");
 
         // Start watchdog
         start_watchdog(wizard_slide);
