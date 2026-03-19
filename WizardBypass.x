@@ -186,9 +186,8 @@ static void start_watchdog(void) {
     });
 }
 
-// ============================================================================
-// drawInMTKView: diagnostic hook (log, don't NOP)
-// ============================================================================
+/*
+// drawInMTKView NOP - disabled, menu needs Metal rendering
 static int g_draw_count = 0;
 static IMP g_orig_drawInMTKView = NULL;
 
@@ -211,11 +210,11 @@ static void setup_draw_diagnostic(void) {
         if (g_draw_count <= 3 || g_draw_count % 1000 == 0) {
             NSLog(@"[WizardBypass] drawInMTKView NOP'd (call #%d)", g_draw_count);
         }
-        // DO NOT call original — it infinite-loops (anti-tamper)
     });
     method_setImplementation(drawMethod, nopDraw);
     NSLog(@"[WizardBypass] drawInMTKView: NOP'd (anti-tamper infinite loop blocked)");
 }
+*/
 
 // ============================================================================
 // DELAYED HOOK
