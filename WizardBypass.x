@@ -281,6 +281,37 @@ static void delayed_hook(void) {
 
     if (found) {
         NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
+        
+        // ========================================
+        // NOP the TBZ in sub_B28518 (DECISION FUNCTION)
+        // IDA: void __usercall sub_B28518(char a1@<W8>, __int64 a2@<X0>)
+        //   if (W8 & 1 == 0) sub_1AF600(X0);  // error (noreturn)
+        //   sub_315C80(X0);                     // success
+        // First insn: TBZ W8, #0, <error> (0x3600e9e8)
+        // Second insn: B <success> (0x17dfb5d9)
+        // NOP the TBZ → always falls through to B <success>
+        // ========================================
+        
+        uint64_t tbz_addr = (uint64_t)wizard_slide + 0xB28518;
+        uint32_t *insn_ptr = (uint32_t *)tbz_addr;
+        
+        NSLog(@"[WizardBypass] Patching TBZ at 0x%llx", (unsigned long long)tbz_addr);
+        NSLog(@"[WizardBypass] Before: [0]=0x%08x [1]=0x%08x", insn_ptr[0], insn_ptr[1]);
+        
+        kern_return_t kr = vm_protect(mach_task_self(),
+                                       (vm_address_t)(tbz_addr & ~0xFFF),
+                                       0x1000, NO,
+                                       VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+        
+        if (kr == KERN_SUCCESS) {
+            // NOP = 0xD503201F on ARM64
+            insn_ptr[0] = 0xD503201F;
+            sys_icache_invalidate((void *)tbz_addr, 8);
+            NSLog(@"[WizardBypass] *** TBZ NOP'd! Error branch DISABLED ***");
+            NSLog(@"[WizardBypass] After: [0]=0x%08x [1]=0x%08x", insn_ptr[0], insn_ptr[1]);
+        } else {
+            NSLog(@"[WizardBypass] vm_protect FAILED: %d", kr);
+        }
     }
 
     NSLog(@"[WizardBypass] === DELAYED HOOK COMPLETE ===");
