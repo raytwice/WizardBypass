@@ -355,6 +355,74 @@ static void wizard_bypass_init(void) {
 
         NSLog(@"[WizardBypass] === FULL BYPASS ACTIVE ===");
 
+        // Step D: KEY FORMAT DIAGNOSTIC
+        // Monitor text field and config region to capture key format
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            // Snapshot the config region BEFORE any key entry
+            uint8_t snapshot[64];
+            uint8_t *cfg_diag = (uint8_t *)(base_addr + 0x1B0B470);
+            memcpy(snapshot, cfg_diag, 64);
+            
+            NSLog(@"[WizardBypass] KEY DIAG: monitoring started");
+            
+            for (int tick = 0; tick < 300; tick++) { // 5 minutes
+                usleep(1000000); // 1 sec
+                
+                // Read text field content (qword_1E89780 style — try BOTH text fields)
+                dispatch_sync(dispatch_get_main_queue(), ^{
+                    // Try reading the visible text field
+                    uint64_t *tf_ptr1 = (uint64_t *)(base_addr + 0x1E89780);
+                    uint64_t *tf_ptr2 = (uint64_t *)(base_addr + 0x1E897C0);
+                    
+                    id textField1 = (__bridge id)(void *)*tf_ptr1;
+                    id textField2 = (__bridge id)(void *)*tf_ptr2;
+                    
+                    if (textField1) {
+                        NSString *text1 = ((NSString *(*)(id, SEL))objc_msgSend)(textField1, sel_registerName("text"));
+                        if (text1 && [text1 length] > 0) {
+                            NSLog(@"[WizardBypass] KEY DIAG TF1: \"%@\" (len=%lu)", text1, (unsigned long)[text1 length]);
+                            
+                            // Try Base64 decode
+                            NSData *decoded = [[NSData alloc] initWithBase64EncodedString:text1 options:0];
+                            if (decoded) {
+                                const uint8_t *bytes = [decoded bytes];
+                                NSUInteger len = [decoded length];
+                                NSMutableString *hex = [NSMutableString string];
+                                for (NSUInteger i = 0; i < len && i < 32; i++) {
+                                    [hex appendFormat:@"%02X ", bytes[i]];
+                                }
+                                NSLog(@"[WizardBypass] KEY DIAG B64: %lu bytes = %@", (unsigned long)len, hex);
+                            }
+                        }
+                    }
+                    
+                    if (textField2) {
+                        NSString *text2 = ((NSString *(*)(id, SEL))objc_msgSend)(textField2, sel_registerName("text"));
+                        if (text2 && [text2 length] > 0) {
+                            NSLog(@"[WizardBypass] KEY DIAG TF2: \"%@\"", text2);
+                        }
+                    }
+                });
+                
+                // Check if config region changed (means sub_81E8B0 ran)
+                if (memcmp(snapshot, cfg_diag, 64) != 0) {
+                    NSLog(@"[WizardBypass] KEY DIAG: *** CONFIG CHANGED *** sub_81E8B0 was called!");
+                    // Dump the new config
+                    NSMutableString *hex = [NSMutableString string];
+                    for (int i = 0; i < 64; i++) {
+                        [hex appendFormat:@"%02X ", cfg_diag[i]];
+                        if (i % 16 == 15) {
+                            NSLog(@"[WizardBypass] KEY DIAG cfg[%d..%d]: %@", i-15, i, hex);
+                            hex = [NSMutableString string];
+                        }
+                    }
+                    memcpy(snapshot, cfg_diag, 64); // Update snapshot
+                    *auth_flag = 1; // Re-enforce
+                }
+            }
+            NSLog(@"[WizardBypass] KEY DIAG: monitoring ended (300s)");
+        });
+
         // Start watchdog
         start_watchdog(wizard_slide);
     });
