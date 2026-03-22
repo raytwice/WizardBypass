@@ -199,7 +199,10 @@ static void wizard_bypass_init(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             // Try to find and dismiss SCLAlertView
+            #pragma clang diagnostic push
+            #pragma clang diagnostic ignored "-Wdeprecated-declarations"
             UIWindow *keyWindow = [[UIApplication sharedApplication] keyWindow];
+            #pragma clang diagnostic pop
             for (UIView *subview in keyWindow.subviews) {
                 if ([NSStringFromClass([subview class]) containsString:@"SCL"]) {
                     [subview removeFromSuperview];
