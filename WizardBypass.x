@@ -109,30 +109,60 @@ static void setup_dylib_hiding(void) {
 }
 
 // ============================================================================
-// drawInMTKView NOP — prevents anti-tamper infinite loop
+// ANTI-TAMPER NOP — only NOP the jsafbSAHCN delegate call,
+// NOT the entire drawInMTKView. This lets Metal render the cheat overlays.
 // ============================================================================
 static int g_draw_count = 0;
 
 static void setup_draw_nop(void) {
-    Class metalClass = objc_getClass("AJFADSHFSAJXN");
-    if (!metalClass) {
-        NSLog(@"[WizardBypass] drawInMTKView: class not found (ok if not loaded yet)");
-        return;
-    }
-    SEL drawSel = sel_registerName("drawInMTKView:");
-    Method drawMethod = class_getInstanceMethod(metalClass, drawSel);
-    if (!drawMethod) {
-        NSLog(@"[WizardBypass] drawInMTKView: method not found");
-        return;
-    }
-    IMP nopDraw = imp_implementationWithBlock(^(id self, id view) {
-        g_draw_count++;
-        if (g_draw_count <= 3 || g_draw_count % 5000 == 0) {
-            NSLog(@"[WizardBypass] drawInMTKView NOP'd (call #%d)", g_draw_count);
+    // Strategy: NOP jsafbSAHCN on ALL classes that implement it.
+    // drawInMTKView calls [delegate jsafbSAHCN] which is the anti-tamper check.
+    // The rest of drawInMTKView is normal Metal rendering — leave it alone.
+    
+    // NOP jsafbSAHCN on the delegate class (ABVJSMGADJS or similar)
+    SEL antiTamperSel = sel_registerName("jsafbSAHCN");
+    
+    // Try known classes that might implement this
+    const char *classNames[] = {"ABVJSMGADJS", "AJFADSHFSAJXN", "Pajdsakdfj", "Kmsjfaigh", NULL};
+    int hooked = 0;
+    
+    for (int i = 0; classNames[i] != NULL; i++) {
+        Class cls = objc_getClass(classNames[i]);
+        if (!cls) continue;
+        
+        Method m = class_getInstanceMethod(cls, antiTamperSel);
+        if (m) {
+            IMP nop = imp_implementationWithBlock(^(id self) {
+                g_draw_count++;
+                if (g_draw_count <= 3 || g_draw_count % 10000 == 0) {
+                    NSLog(@"[WizardBypass] jsafbSAHCN NOP'd (call #%d)", g_draw_count);
+                }
+            });
+            method_setImplementation(m, nop);
+            NSLog(@"[WizardBypass] jsafbSAHCN NOP'd on %s", classNames[i]);
+            hooked++;
         }
-    });
-    method_setImplementation(drawMethod, nopDraw);
-    NSLog(@"[WizardBypass] drawInMTKView: NOP'd");
+    }
+    
+    if (hooked == 0) {
+        // Fallback: NOP the entire drawInMTKView if we can't find jsafbSAHCN
+        NSLog(@"[WizardBypass] jsafbSAHCN not found on known classes, falling back to drawInMTKView NOP");
+        Class metalClass = objc_getClass("AJFADSHFSAJXN");
+        if (metalClass) {
+            SEL drawSel = sel_registerName("drawInMTKView:");
+            Method drawMethod = class_getInstanceMethod(metalClass, drawSel);
+            if (drawMethod) {
+                IMP nopDraw = imp_implementationWithBlock(^(id self, id view) {
+                    g_draw_count++;
+                    if (g_draw_count <= 3 || g_draw_count % 5000 == 0) {
+                        NSLog(@"[WizardBypass] drawInMTKView NOP'd (call #%d)", g_draw_count);
+                    }
+                });
+                method_setImplementation(drawMethod, nopDraw);
+                NSLog(@"[WizardBypass] drawInMTKView: NOP'd (fallback)");
+            }
+        }
+    }
 }
 
 // ============================================================================
