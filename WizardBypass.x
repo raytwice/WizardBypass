@@ -271,10 +271,19 @@ static void wizard_bypass_init(void) {
         //   xmmword_1B0B4C0    = xmmword_FD6860
         uint8_t *cfg = (uint8_t *)(base_addr + 0x1B0B470);
         
-        // Byte flags
-        cfg[0] = 0x00; cfg[1] = 0x01; // LOWORD = 256
-        cfg[2] = 0x01;                // BYTE2 = 1
-        cfg[3] = cfg[4] = cfg[5] = cfg[6] = cfg[7] = 0;
+        // Byte flags — enable ALL features
+        // cfg[0] = LOBYTE(xmmword_1B0B470) — toggled by play/pause button
+        // cfg[1] = preddrawon, cfg[2] = shotdrawe, cfg[3] = screantiot
+        // cfg[4] = ndguexteinesidel, cfg[5] = lassusecyle
+        // cfg[6] = rmarwate, cfg[7] = playauto
+        cfg[0] = 0x01; // Start with enabled
+        cfg[1] = 0x01; // preddrawon
+        cfg[2] = 0x01; // shotdrawe
+        cfg[3] = 0x01; // screantiot
+        cfg[4] = 0x01; // ndguexteinesidel (extended guidelines)
+        cfg[5] = 0x01; // lassusecyle
+        cfg[6] = 0x00; // rmarwate (watermark — leave OFF)
+        cfg[7] = 0x01; // playauto
         
         // Copy float defaults from __const section
         memcpy(cfg + 8,  (void *)(base_addr + 0xFD6820), 16); // xmmword_FD6820
