@@ -178,7 +178,7 @@ static void start_watchdog(intptr_t wizard_slide) {
 // ============================================================================
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizardBypass] === v52 DIAGNOSTIC + AUTH ENFORCER ===");
+    NSLog(@"[WizardBypass] === v53 COMBINED BYPASS ===");
 
     // 1. Signal handler (anti-tamper protection)
     struct sigaction sa;
@@ -193,10 +193,10 @@ static void wizard_bypass_init(void) {
     // 2. Dylib hiding
     setup_dylib_hiding();
 
-    // 3. NOP drawInMTKView (prevent freeze)
+    // 3. NOP drawInMTKView (prevents anti-tamper infinite loop that freezes main thread)
     setup_draw_nop();
 
-    // 4. Delayed auth bypass (5s — wait for Wizard to fully load)
+    // 4. Delayed bypass (5s — wait for Wizard to fully load)
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         NSLog(@"[WizardBypass] === DELAYED BYPASS START ===");
@@ -222,25 +222,13 @@ static void wizard_bypass_init(void) {
 
         NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
 
-        // Set auth flag = 1
+        // Step A: Set auth flag = 1
         uint8_t *auth_flag = (uint8_t *)((uint64_t)wizard_slide + 0x1B0B4A9);
         NSLog(@"[WizardBypass] byte_1B0B4A9 BEFORE: %d", *auth_flag);
         *auth_flag = 1;
         NSLog(@"[WizardBypass] byte_1B0B4A9 AFTER: %d", *auth_flag);
 
-        // Dump config region
-        uint8_t *base = (uint8_t *)((uint64_t)wizard_slide + 0x1B0B470);
-        NSLog(@"[WizardBypass] xmmword_1B0B470 dump:");
-        NSLog(@"[WizardBypass]   +0x00: %02X %02X %02X %02X %02X %02X %02X %02X",
-              base[0], base[1], base[2], base[3], base[4], base[5], base[6], base[7]);
-        NSLog(@"[WizardBypass]   +0x38: %02X [%02X] %02X %02X (byte_1B0B4A9 = [%02X])",
-              base[0x38], base[0x39], base[0x3A], base[0x3B], base[0x39]);
-
-        // ================================================================
-        // AUTH ENFORCER — background timer that keeps byte_1B0B4A9 = 1
-        // sub_81E8B0 (license processor) resets it to 0 on every key submit.
-        // We run from a BG thread so it works even if main thread is blocked.
-        // ================================================================
+        // Step B: Auth enforcer (background thread, keeps flag at 1)
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
             static int enforce_count = 0;
             static int restore_count = 0;
@@ -248,21 +236,50 @@ static void wizard_bypass_init(void) {
             
             NSLog(@"[WizardBypass] AUTH ENFORCER started (50ms interval)");
             while (1) {
-                usleep(50000); // 50ms = 20 checks/sec
+                usleep(50000);
                 if (*flag != 1) {
                     *flag = 1;
                     restore_count++;
-                    NSLog(@"[WizardBypass] AUTH ENFORCER: restored byte_1B0B4A9 = 1 (#%d)", restore_count);
+                    NSLog(@"[WizardBypass] AUTH ENFORCER: restored (#%d)", restore_count);
                 }
                 enforce_count++;
-                if (enforce_count % 200 == 0) { // Log every 10s
+                if (enforce_count % 200 == 0) {
                     NSLog(@"[WizardBypass] AUTH ENFORCER alive (%d checks, %d restores)", 
                           enforce_count, restore_count);
                 }
             }
         });
 
-        NSLog(@"[WizardBypass] === BYPASS + ENFORCER ACTIVE ===");
+        // Step C: Call IKAFHFDSAJ — the complete menu builder
+        // This triggers the FULL success flow:
+        //   1. Checks pJMSAFHSJSFV superview (first call → falls through)
+        //   2. Builds key entry UI + container views
+        //   3. Decrypts all menu strings (3 deterministic loops)
+        //   4. Creates 5 menu views and adds to keyWindow
+        //   5. Calls ASFGAHJFAHS internally (starts 30fps timer)
+        // v50 proved this works (user saw icons). v52 NOP prevents the freeze.
+        Class wizardClass = objc_getClass("ABVJSMGADJS");
+        if (wizardClass) {
+            NSLog(@"[WizardBypass] ABVJSMGADJS class found");
+            
+            SEL singletonSel = sel_registerName("ANDASFJSGX");
+            id instance = ((id (*)(Class, SEL))objc_msgSend)(wizardClass, singletonSel);
+            
+            if (instance) {
+                NSLog(@"[WizardBypass] Singleton: %p", instance);
+                
+                SEL menuSel = sel_registerName("IKAFHFDSAJ");
+                NSLog(@"[WizardBypass] Calling IKAFHFDSAJ...");
+                ((void (*)(id, SEL))objc_msgSend)(instance, menuSel);
+                NSLog(@"[WizardBypass] *** IKAFHFDSAJ COMPLETE ***");
+            } else {
+                NSLog(@"[WizardBypass] ERROR: singleton nil!");
+            }
+        } else {
+            NSLog(@"[WizardBypass] ERROR: class not found!");
+        }
+
+        NSLog(@"[WizardBypass] === FULL BYPASS ACTIVE ===");
 
         // Start watchdog
         start_watchdog(wizard_slide);
