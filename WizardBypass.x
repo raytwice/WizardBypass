@@ -222,11 +222,46 @@ static void wizard_bypass_init(void) {
 
         NSLog(@"[WizardBypass] Wizard slide: 0x%lx", (long)wizard_slide);
 
-        // Step A: Set auth flag = 1
-        uint8_t *auth_flag = (uint8_t *)((uint64_t)wizard_slide + 0x1B0B4A9);
+        // Step A: Set auth flag + default config values
+        // sub_81E8B0 normally sets these from __const, but it never runs.
+        // Without them, menu panels have zero-size frames.
+        uint64_t base_addr = (uint64_t)wizard_slide;
+        
+        // Auth flag
+        uint8_t *auth_flag = (uint8_t *)(base_addr + 0x1B0B4A9);
         NSLog(@"[WizardBypass] byte_1B0B4A9 BEFORE: %d", *auth_flag);
         *auth_flag = 1;
-        NSLog(@"[WizardBypass] byte_1B0B4A9 AFTER: %d", *auth_flag);
+        
+        // Config region layout (from sub_81E8B0 init):
+        //   xmmword_1B0B470[0..1] = 0x0100 (256), [2] = 1, [3..7] = 0
+        //   xmmword_1B0B470+8  = xmmword_FD6820 (float positions)
+        //   xmmword_1B0B480+8  = xmmword_FD6830
+        //   xmmword_1B0B498    = xmmword_FD6840
+        //   xmmword_1B0B4B0    = xmmword_FD6850
+        //   xmmword_1B0B4C0    = xmmword_FD6860
+        uint8_t *cfg = (uint8_t *)(base_addr + 0x1B0B470);
+        
+        // Byte flags
+        cfg[0] = 0x00; cfg[1] = 0x01; // LOWORD = 256
+        cfg[2] = 0x01;                // BYTE2 = 1
+        cfg[3] = cfg[4] = cfg[5] = cfg[6] = cfg[7] = 0;
+        
+        // Copy float defaults from __const section
+        memcpy(cfg + 8,  (void *)(base_addr + 0xFD6820), 16); // xmmword_FD6820
+        memcpy(cfg + 24, (void *)(base_addr + 0xFD6830), 16); // xmmword_FD6830
+        memcpy((void *)(base_addr + 0x1B0B498), (void *)(base_addr + 0xFD6840), 16);
+        memcpy((void *)(base_addr + 0x1B0B4B0), (void *)(base_addr + 0xFD6850), 16);
+        memcpy((void *)(base_addr + 0x1B0B4C0), (void *)(base_addr + 0xFD6860), 16);
+        
+        // Re-set auth flag (memcpy might have overwritten it)
+        *auth_flag = 1;
+        
+        NSLog(@"[WizardBypass] Config defaults applied + byte_1B0B4A9 = 1");
+        
+        // Dump float values for diagnostics
+        float *flt = (float *)(cfg + 8);
+        NSLog(@"[WizardBypass] Float configs: %.1f %.1f %.1f %.1f",
+              flt[0], flt[1], flt[2], flt[3]);
 
         // Step B: Auth enforcer (background thread, keeps flag at 1)
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
