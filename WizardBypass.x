@@ -123,7 +123,7 @@ static void setup_draw_nop(void) {
     SEL antiTamperSel = sel_registerName("jsafbSAHCN");
     
     // Try known classes that might implement this
-    const char *classNames[] = {"ABVJSMGADJS", "AJFADSHFSAJXN", "Pajdsakdfj", "Kmsjfaigh", NULL};
+    const char *classNames[] = {"Wksahfnasj", "ABVJSMGADJS", "AJFADSHFSAJXN", "Pajdsakdfj", "Kmsjfaigh", NULL};
     int hooked = 0;
     
     for (int i = 0; classNames[i] != NULL; i++) {
