@@ -1,9 +1,6 @@
-// WizardBypass v59 — FIXED CLASS NAME + DATA DUMPER
-// BUG FIX: SCLButton doesn't exist! The correct class is SCLALertViewButtonBuilder
-// This version:
-// 1. Hooks SCLALertViewButtonBuilder.validationBlock → nil (any key accepted)
-// 2. Dumps validation loop output via NSLog for keygen analysis
-// 3. NOP anti-tamper, set config flags + auth
+// WizardBypass v60 — Hook buttonTapped: to clear validation
+// Instead of hooking validationBlock getter (class hierarchy issues),
+// hook buttonTapped: and call setValidationBlock:nil BEFORE original runs.
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -33,11 +30,25 @@ static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     }
 }
 
-// ── Hook: UIImage imageWithData: (captures validation result) ──
+// ── Hook: SCLAlertView buttonTapped: ──
+static void (*orig_buttonTapped)(id, SEL, id) = NULL;
+static void hooked_buttonTapped(id self, SEL _cmd, id button) {
+    // Clear validation block on the button — doesn't matter what class it is
+    NSLog(@"[WizKey] buttonTapped: fired! Button class: %@", NSStringFromClass([button class]));
+    @try {
+        ((void(*)(id, SEL, id))objc_msgSend)(button, sel_registerName("setValidationBlock:"), nil);
+        NSLog(@"[WizKey] *** setValidationBlock:nil — validation bypassed! ***");
+    } @catch (NSException *e) {
+        NSLog(@"[WizKey] setValidationBlock failed: %@", e);
+    }
+    // Call original — with validationBlock=nil, it will skip validation and call actionBlock
+    orig_buttonTapped(self, _cmd, button);
+}
+
+// ── Hook: UIImage imageWithData: (keygen data capture) ──
 static id (*orig_imageWithData)(id, SEL, id) = NULL;
 static id hooked_imageWithData(id self, SEL _cmd, id data) {
     id result = orig_imageWithData(self, _cmd, data);
-    // Only log Wizard-related calls (data > 100 bytes)
     if (data) {
         NSUInteger len = [(NSData *)data length];
         if (len > 100 && len < 100000) {
@@ -55,9 +66,9 @@ static id hooked_imageWithData(id self, SEL _cmd, id data) {
 // ── Constructor ──
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizKey] === v59 START ===");
+    NSLog(@"[WizKey] === v60 START ===");
 
-    // Signal handler for 0xDEAD
+    // Signal handler
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = anti_tamper_handler;
@@ -66,7 +77,7 @@ static void wizard_bypass_init(void) {
     sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGSEGV, &sa, NULL);
 
-    // Hook jsafbSAHCN (anti-tamper NOP)
+    // Hook jsafbSAHCN NOP
     Class wksClass = objc_getClass("Wksahfnasj");
     if (wksClass) {
         Method m = class_getInstanceMethod(wksClass, sel_registerName("jsafbSAHCN"));
@@ -76,27 +87,21 @@ static void wizard_bypass_init(void) {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // CRITICAL FIX: Hook SCLALertViewButtonBuilder (NOT SCLButton!)
-    // SCLButton doesn't exist in Wizard binary!
-    // ═══════════════════════════════════════════════════════════
-    Class btnBuilder = objc_getClass("SCLALertViewButtonBuilder");
-    if (btnBuilder) {
-        Method m = class_getInstanceMethod(btnBuilder, sel_registerName("validationBlock"));
+    // ═══════════════════════════════════════════════════════
+    // HOOK buttonTapped: on SCLAlertView
+    // Clear validationBlock on the button BEFORE original runs
+    // ═══════════════════════════════════════════════════════
+    Class sclAlert = objc_getClass("SCLAlertView");
+    if (sclAlert) {
+        Method m = class_getInstanceMethod(sclAlert, sel_registerName("buttonTapped:"));
         if (m) {
-            method_setImplementation(m, imp_implementationWithBlock(^id(id self) {
-                NSLog(@"[WizKey] *** validationBlock → nil (any key accepted!) ***");
-                return nil;
-            }));
-            NSLog(@"[WizKey] SCLALertViewButtonBuilder.validationBlock hooked ✓");
-        } else {
-            NSLog(@"[WizKey] ERROR: validationBlock method not found!");
+            orig_buttonTapped = (void (*)(id, SEL, id))method_getImplementation(m);
+            method_setImplementation(m, (IMP)hooked_buttonTapped);
+            NSLog(@"[WizKey] SCLAlertView.buttonTapped: hooked ✓");
         }
-    } else {
-        NSLog(@"[WizKey] ERROR: SCLALertViewButtonBuilder class not found!");
     }
 
-    // Hook UIImage imageWithData: to capture validation output
+    // Hook UIImage imageWithData:
     Method imgM = class_getClassMethod([UIImage class], @selector(imageWithData:));
     if (imgM) {
         orig_imageWithData = (id (*)(id, SEL, id))method_getImplementation(imgM);
@@ -104,7 +109,7 @@ static void wizard_bypass_init(void) {
         NSLog(@"[WizKey] UIImage imageWithData: hooked ✓");
     }
 
-    // Delayed config flags + auth
+    // Delayed config
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         intptr_t wizard_slide = 0;
@@ -117,16 +122,13 @@ static void wizard_bypass_init(void) {
             }
         }
         if (!wizard_slide) { NSLog(@"[WizKey] ERROR: Wizard not found!"); return; }
-        NSLog(@"[WizKey] Wizard slide: 0x%lx", (long)wizard_slide);
 
         uint64_t base = (uint64_t)wizard_slide;
         uint8_t *cfg = (uint8_t *)(base + 0x1B0B470);
         uint8_t *auth = (uint8_t *)(base + 0x1B0B4A9);
 
         cfg[0]=1; cfg[1]=1; cfg[2]=1; cfg[3]=1;
-        cfg[4]=1; // uses hardcoded Base64 icon
-        cfg[5]=1; cfg[6]=0; cfg[7]=1;
-
+        cfg[4]=1; cfg[5]=1; cfg[6]=0; cfg[7]=1;
         memcpy(cfg+8,  (void*)(base+0xFD6820), 16);
         memcpy(cfg+24, (void*)(base+0xFD6830), 16);
         memcpy((void*)(base+0x1B0B498), (void*)(base+0xFD6840), 16);
@@ -134,13 +136,11 @@ static void wizard_bypass_init(void) {
         memcpy((void*)(base+0x1B0B4C0), (void*)(base+0xFD6860), 16);
 
         *auth = 1;
-        NSLog(@"[WizKey] Config + auth set ✓");
+        NSLog(@"[WizKey] Config + auth set");
 
-        // Auth enforcer
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
             while (1) { usleep(50000); if (*auth != 1) *auth = 1; }
         });
-
-        NSLog(@"[WizKey] === READY — Enter any key, tap submit! ===");
+        NSLog(@"[WizKey] === READY ===");
     });
 }
