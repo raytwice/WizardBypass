@@ -1,7 +1,9 @@
-// WizardBypass v58 — KEY DUMPER
-// Hooks NSData dataWithBytes:length: to capture what the validation loops produce
-// Also hooks UIImage imageWithData: to know if the key is valid
-// Read output with: idevicesyslog.exe | findstr "WizardDump"
+// WizardBypass v59 — FIXED CLASS NAME + DATA DUMPER
+// BUG FIX: SCLButton doesn't exist! The correct class is SCLALertViewButtonBuilder
+// This version:
+// 1. Hooks SCLALertViewButtonBuilder.validationBlock → nil (any key accepted)
+// 2. Dumps validation loop output via NSLog for keygen analysis
+// 3. NOP anti-tamper, set config flags + auth
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -10,62 +12,52 @@
 #import <mach-o/dyld.h>
 #import <signal.h>
 
-// ── Anti-tamper signal handler ──────────────────────────────
+// ── Anti-tamper signal handler ──
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     ucontext_t *uc = (ucontext_t *)context;
     _STRUCT_MCONTEXT64 *mc = uc->uc_mcontext;
-    mc->__ss.__pc = (uint64_t)uc + 8; // skip 0xDEAD
-}
-
-// jsafbSAHCN hooked via imp_implementationWithBlock in constructor
-
-// ── Hook: NSData dataWithBytes:length: ──────────────────────
-static id (*orig_dataWithBytes)(id, SEL, const void*, NSUInteger) = NULL;
-static id hooked_dataWithBytes(id self, SEL _cmd, const void *bytes, NSUInteger len) {
-    // Only log outputs from Wizard framework (> 100 bytes = likely image data)
-    if (len > 100 && len < 100000) {
-        NSLog(@"[WizardDump] dataWithBytes:length: called, len=%lu", (unsigned long)len);
-        
-        // Log first 32 bytes as hex
-        const uint8_t *b = (const uint8_t *)bytes;
-        NSMutableString *hex = [NSMutableString string];
-        for (NSUInteger i = 0; i < MIN(32, len); i++) {
-            [hex appendFormat:@"%02X ", b[i]];
-        }
-        NSLog(@"[WizardDump] First 32 bytes: %@", hex);
-        
-        // Check if it's a valid PNG (starts with PNG header)
-        if (len > 8 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47) {
-            NSLog(@"[WizardDump] *** VALID PNG DETECTED! len=%lu ***", (unsigned long)len);
-            // Dump ALL bytes as hex for full keygen
-            NSMutableString *fullHex = [NSMutableString string];
-            for (NSUInteger i = 0; i < len; i++) {
-                [fullHex appendFormat:@"%02X", b[i]];
+    uint64_t pc = mc->__ss.__pc;
+    if (pc == 0xDEAD || pc == 0xdead) {
+        uint64_t fp = mc->__ss.__fp;
+        for (int i = 0; i < 5 && fp > 0x1000; i++) {
+            uint64_t *frame = (uint64_t *)fp;
+            uint64_t saved_lr = frame[1];
+            if (saved_lr > 0x100000000 && saved_lr != 0xDEAD) {
+                mc->__ss.__pc = saved_lr;
+                mc->__ss.__fp = frame[0];
+                return;
             }
-            NSLog(@"[WizardDump] FULL PNG HEX: %@", fullHex);
+            fp = frame[0];
         }
+        mc->__ss.__pc = (uint64_t)&sleep;
     }
-    return orig_dataWithBytes(self, _cmd, bytes, len);
 }
 
-// ── Hook: UIImage imageWithData: ────────────────────────────
+// ── Hook: UIImage imageWithData: (captures validation result) ──
 static id (*orig_imageWithData)(id, SEL, id) = NULL;
 static id hooked_imageWithData(id self, SEL _cmd, id data) {
     id result = orig_imageWithData(self, _cmd, data);
-    if (result) {
-        NSLog(@"[WizardDump] *** UIImage created! KEY IS VALID! ***");
-    } else {
-        NSLog(@"[WizardDump] UIImage nil — key invalid or data not ready");
+    // Only log Wizard-related calls (data > 100 bytes)
+    if (data) {
+        NSUInteger len = [(NSData *)data length];
+        if (len > 100 && len < 100000) {
+            const uint8_t *b = [(NSData *)data bytes];
+            NSMutableString *hex = [NSMutableString string];
+            for (NSUInteger i = 0; i < MIN(64, len); i++)
+                [hex appendFormat:@"%02X", b[i]];
+            NSLog(@"[WizKey] imageWithData len=%lu first64=%@ result=%@",
+                  (unsigned long)len, hex, result ? @"VALID" : @"nil");
+        }
     }
     return result;
 }
 
-// ── Constructor ─────────────────────────────────────────────
+// ── Constructor ──
 __attribute__((constructor))
-static void wizard_dumper_init(void) {
-    NSLog(@"[WizardDump] === v58 KEY DUMPER START ===");
-    
-    // Signal handler
+static void wizard_bypass_init(void) {
+    NSLog(@"[WizKey] === v59 START ===");
+
+    // Signal handler for 0xDEAD
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = anti_tamper_handler;
@@ -73,45 +65,82 @@ static void wizard_dumper_init(void) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGSEGV, &sa, NULL);
-    
+
     // Hook jsafbSAHCN (anti-tamper NOP)
     Class wksClass = objc_getClass("Wksahfnasj");
     if (wksClass) {
         Method m = class_getInstanceMethod(wksClass, sel_registerName("jsafbSAHCN"));
         if (m) {
             method_setImplementation(m, imp_implementationWithBlock(^(id self) {}));
-            NSLog(@"[WizardDump] jsafbSAHCN NOP'd");
+            NSLog(@"[WizKey] jsafbSAHCN NOP'd");
         }
     }
-    
-    // Hook NSData dataWithBytes:length: (class method)
-    Class NSDataClass = objc_getMetaClass("NSData");
-    if (NSDataClass) {
-        Method m = class_getClassMethod(objc_getClass("NSData"), @selector(dataWithBytes:length:));
+
+    // ═══════════════════════════════════════════════════════════
+    // CRITICAL FIX: Hook SCLALertViewButtonBuilder (NOT SCLButton!)
+    // SCLButton doesn't exist in Wizard binary!
+    // ═══════════════════════════════════════════════════════════
+    Class btnBuilder = objc_getClass("SCLALertViewButtonBuilder");
+    if (btnBuilder) {
+        Method m = class_getInstanceMethod(btnBuilder, sel_registerName("validationBlock"));
         if (m) {
-            orig_dataWithBytes = (id (*)(id, SEL, const void*, NSUInteger))method_getImplementation(m);
-            method_setImplementation(m, (IMP)hooked_dataWithBytes);
-            NSLog(@"[WizardDump] NSData dataWithBytes:length: hooked");
+            method_setImplementation(m, imp_implementationWithBlock(^id(id self) {
+                NSLog(@"[WizKey] *** validationBlock → nil (any key accepted!) ***");
+                return nil;
+            }));
+            NSLog(@"[WizKey] SCLALertViewButtonBuilder.validationBlock hooked ✓");
+        } else {
+            NSLog(@"[WizKey] ERROR: validationBlock method not found!");
         }
+    } else {
+        NSLog(@"[WizKey] ERROR: SCLALertViewButtonBuilder class not found!");
     }
-    
-    // Hook UIImage imageWithData: (class method)  
-    Method imgM = class_getClassMethod(objc_getClass("UIImage"), @selector(imageWithData:));
+
+    // Hook UIImage imageWithData: to capture validation output
+    Method imgM = class_getClassMethod([UIImage class], @selector(imageWithData:));
     if (imgM) {
         orig_imageWithData = (id (*)(id, SEL, id))method_getImplementation(imgM);
         method_setImplementation(imgM, (IMP)hooked_imageWithData);
-        NSLog(@"[WizardDump] UIImage imageWithData: hooked");
+        NSLog(@"[WizKey] UIImage imageWithData: hooked ✓");
     }
-    
-    // Also hook SCLButton.validationBlock → nil
-    Class sclBtnClass = objc_getClass("SCLButton");
-    if (sclBtnClass) {
-        Method m = class_getInstanceMethod(sclBtnClass, sel_registerName("validationBlock"));
-        if (m) {
-            method_setImplementation(m, imp_implementationWithBlock(^id(id self) { return nil; }));
-            NSLog(@"[WizardDump] SCLButton.validationBlock → nil");
+
+    // Delayed config flags + auth
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        intptr_t wizard_slide = 0;
+        uint32_t count = _dyld_image_count();
+        for (uint32_t i = 0; i < count; i++) {
+            const char *name = _dyld_get_image_name(i);
+            if (name && strstr(name, "Wizard.framework/Wizard")) {
+                wizard_slide = _dyld_get_image_vmaddr_slide(i);
+                break;
+            }
         }
-    }
-    
-    NSLog(@"[WizardDump] === READY — Enter any key and tap submit ===");
+        if (!wizard_slide) { NSLog(@"[WizKey] ERROR: Wizard not found!"); return; }
+        NSLog(@"[WizKey] Wizard slide: 0x%lx", (long)wizard_slide);
+
+        uint64_t base = (uint64_t)wizard_slide;
+        uint8_t *cfg = (uint8_t *)(base + 0x1B0B470);
+        uint8_t *auth = (uint8_t *)(base + 0x1B0B4A9);
+
+        cfg[0]=1; cfg[1]=1; cfg[2]=1; cfg[3]=1;
+        cfg[4]=1; // uses hardcoded Base64 icon
+        cfg[5]=1; cfg[6]=0; cfg[7]=1;
+
+        memcpy(cfg+8,  (void*)(base+0xFD6820), 16);
+        memcpy(cfg+24, (void*)(base+0xFD6830), 16);
+        memcpy((void*)(base+0x1B0B498), (void*)(base+0xFD6840), 16);
+        memcpy((void*)(base+0x1B0B4B0), (void*)(base+0xFD6850), 16);
+        memcpy((void*)(base+0x1B0B4C0), (void*)(base+0xFD6860), 16);
+
+        *auth = 1;
+        NSLog(@"[WizKey] Config + auth set ✓");
+
+        // Auth enforcer
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            while (1) { usleep(50000); if (*auth != 1) *auth = 1; }
+        });
+
+        NSLog(@"[WizKey] === READY — Enter any key, tap submit! ===");
+    });
 }
