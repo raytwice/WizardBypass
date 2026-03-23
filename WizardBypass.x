@@ -1,6 +1,6 @@
-// WizardBypass v60 — Hook buttonTapped: to clear validation
-// Instead of hooking validationBlock getter (class hierarchy issues),
-// hook buttonTapped: and call setValidationBlock:nil BEFORE original runs.
+// WizardBypass v61 — DIRECT CALL: Skip popup, call IKAFHFDSAJ directly
+// The menu views are added UNCONDITIONALLY after LABEL_538
+// With cfg[4]=1, the hardcoded Base64 icon is used — no valid key needed
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -9,7 +9,7 @@
 #import <mach-o/dyld.h>
 #import <signal.h>
 
-// ── Anti-tamper signal handler ──
+// ── Anti-tamper ──
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     ucontext_t *uc = (ucontext_t *)context;
     _STRUCT_MCONTEXT64 *mc = uc->uc_mcontext;
@@ -30,43 +30,9 @@ static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     }
 }
 
-// ── Hook: SCLAlertView buttonTapped: ──
-static void (*orig_buttonTapped)(id, SEL, id) = NULL;
-static void hooked_buttonTapped(id self, SEL _cmd, id button) {
-    // Clear validation block on the button — doesn't matter what class it is
-    NSLog(@"[WizKey] buttonTapped: fired! Button class: %@", NSStringFromClass([button class]));
-    @try {
-        ((void(*)(id, SEL, id))objc_msgSend)(button, sel_registerName("setValidationBlock:"), nil);
-        NSLog(@"[WizKey] *** setValidationBlock:nil — validation bypassed! ***");
-    } @catch (NSException *e) {
-        NSLog(@"[WizKey] setValidationBlock failed: %@", e);
-    }
-    // Call original — with validationBlock=nil, it will skip validation and call actionBlock
-    orig_buttonTapped(self, _cmd, button);
-}
-
-// ── Hook: UIImage imageWithData: (keygen data capture) ──
-static id (*orig_imageWithData)(id, SEL, id) = NULL;
-static id hooked_imageWithData(id self, SEL _cmd, id data) {
-    id result = orig_imageWithData(self, _cmd, data);
-    if (data) {
-        NSUInteger len = [(NSData *)data length];
-        if (len > 100 && len < 100000) {
-            const uint8_t *b = [(NSData *)data bytes];
-            NSMutableString *hex = [NSMutableString string];
-            for (NSUInteger i = 0; i < MIN(64, len); i++)
-                [hex appendFormat:@"%02X", b[i]];
-            NSLog(@"[WizKey] imageWithData len=%lu first64=%@ result=%@",
-                  (unsigned long)len, hex, result ? @"VALID" : @"nil");
-        }
-    }
-    return result;
-}
-
-// ── Constructor ──
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizKey] === v60 START ===");
+    NSLog(@"[WizKey] === v61 START ===");
 
     // Signal handler
     struct sigaction sa;
@@ -87,30 +53,23 @@ static void wizard_bypass_init(void) {
         }
     }
 
-    // ═══════════════════════════════════════════════════════
-    // HOOK buttonTapped: on SCLAlertView
-    // Clear validationBlock on the button BEFORE original runs
-    // ═══════════════════════════════════════════════════════
+    // Hook buttonTapped: (still useful if popup appears)
     Class sclAlert = objc_getClass("SCLAlertView");
     if (sclAlert) {
         Method m = class_getInstanceMethod(sclAlert, sel_registerName("buttonTapped:"));
         if (m) {
-            orig_buttonTapped = (void (*)(id, SEL, id))method_getImplementation(m);
-            method_setImplementation(m, (IMP)hooked_buttonTapped);
-            NSLog(@"[WizKey] SCLAlertView.buttonTapped: hooked ✓");
+            void (*orig)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(m);
+            method_setImplementation(m, imp_implementationWithBlock(^(id self, id button) {
+                NSLog(@"[WizKey] buttonTapped: clearing validation");
+                ((void(*)(id, SEL, id))objc_msgSend)(button, sel_registerName("setValidationBlock:"), nil);
+                orig(self, sel_registerName("buttonTapped:"), button);
+            }));
+            NSLog(@"[WizKey] buttonTapped: hooked");
         }
     }
 
-    // Hook UIImage imageWithData:
-    Method imgM = class_getClassMethod([UIImage class], @selector(imageWithData:));
-    if (imgM) {
-        orig_imageWithData = (id (*)(id, SEL, id))method_getImplementation(imgM);
-        method_setImplementation(imgM, (IMP)hooked_imageWithData);
-        NSLog(@"[WizKey] UIImage imageWithData: hooked ✓");
-    }
-
-    // Delayed config
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
+    // Delayed: set config + auth + call IKAFHFDSAJ directly
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         intptr_t wizard_slide = 0;
         uint32_t count = _dyld_image_count();
@@ -122,13 +81,16 @@ static void wizard_bypass_init(void) {
             }
         }
         if (!wizard_slide) { NSLog(@"[WizKey] ERROR: Wizard not found!"); return; }
+        NSLog(@"[WizKey] Wizard slide: 0x%lx", (long)wizard_slide);
 
         uint64_t base = (uint64_t)wizard_slide;
         uint8_t *cfg = (uint8_t *)(base + 0x1B0B470);
         uint8_t *auth = (uint8_t *)(base + 0x1B0B4A9);
 
+        // Set config flags
         cfg[0]=1; cfg[1]=1; cfg[2]=1; cfg[3]=1;
-        cfg[4]=1; cfg[5]=1; cfg[6]=0; cfg[7]=1;
+        cfg[4]=1; // USE HARDCODED ICON — no valid key needed!
+        cfg[5]=1; cfg[6]=0; cfg[7]=1;
         memcpy(cfg+8,  (void*)(base+0xFD6820), 16);
         memcpy(cfg+24, (void*)(base+0xFD6830), 16);
         memcpy((void*)(base+0x1B0B498), (void*)(base+0xFD6840), 16);
@@ -138,9 +100,47 @@ static void wizard_bypass_init(void) {
         *auth = 1;
         NSLog(@"[WizKey] Config + auth set");
 
+        // Auth enforcer
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
             while (1) { usleep(50000); if (*auth != 1) *auth = 1; }
         });
-        NSLog(@"[WizKey] === READY ===");
+
+        // ═══════════════════════════════════════════════════════
+        // DIRECT CALL: Find ABVJSMGADJS instance and call IKAFHFDSAJ
+        // Bypass the popup entirely!
+        // ═══════════════════════════════════════════════════════
+        Class abvClass = objc_getClass("ABVJSMGADJS");
+        if (!abvClass) {
+            NSLog(@"[WizKey] ERROR: ABVJSMGADJS not found!");
+            return;
+        }
+
+        // Try to find existing instance via sharedInstance or similar
+        id abvInstance = nil;
+
+        // Method 1: Check if there's a shared/singleton accessor
+        if ([abvClass respondsToSelector:sel_registerName("sharedInstance")]) {
+            abvInstance = ((id(*)(id, SEL))objc_msgSend)((id)abvClass, sel_registerName("sharedInstance"));
+            NSLog(@"[WizKey] Found via sharedInstance");
+        }
+
+        // Method 2: alloc/init
+        if (!abvInstance) {
+            abvInstance = ((id(*)(id, SEL))objc_msgSend)(
+                ((id(*)(id, SEL))objc_msgSend)((id)abvClass, sel_registerName("alloc")),
+                sel_registerName("init")
+            );
+            NSLog(@"[WizKey] Created new ABVJSMGADJS instance");
+        }
+
+        if (abvInstance) {
+            NSLog(@"[WizKey] *** CALLING IKAFHFDSAJ DIRECTLY ***");
+            @try {
+                ((void(*)(id, SEL))objc_msgSend)(abvInstance, sel_registerName("IKAFHFDSAJ"));
+                NSLog(@"[WizKey] *** IKAFHFDSAJ returned! Menu should be visible! ***");
+            } @catch (NSException *e) {
+                NSLog(@"[WizKey] IKAFHFDSAJ exception: %@", e);
+            }
+        }
     });
 }
