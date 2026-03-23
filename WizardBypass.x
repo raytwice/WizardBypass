@@ -17,11 +17,7 @@ static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     mc->__ss.__pc = (uint64_t)uc + 8; // skip 0xDEAD
 }
 
-// ── Hook: jsafbSAHCN NOP ────────────────────────────────────
-static void (*orig_jsafb)(id, SEL) = NULL;
-static void hooked_jsafb(id self, SEL _cmd) {
-    // NOP — skip anti-tamper
-}
+// jsafbSAHCN hooked via imp_implementationWithBlock in constructor
 
 // ── Hook: NSData dataWithBytes:length: ──────────────────────
 static id (*orig_dataWithBytes)(id, SEL, const void*, NSUInteger) = NULL;
