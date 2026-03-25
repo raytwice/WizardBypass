@@ -1,6 +1,5 @@
-// WizardBypass v61 — DIRECT CALL: Skip popup, call IKAFHFDSAJ directly
-// The menu views are added UNCONDITIONALLY after LABEL_538
-// With cfg[4]=1, the hardcoded Base64 icon is used — no valid key needed
+// WizardBypass v62 — KEY TRACER: Monitor 0x1E73CE8 to find who writes the key
+// Also hooks sub_AE49F4 to log every read + polls for value changes
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -8,6 +7,10 @@
 #import <objc/message.h>
 #import <mach-o/dyld.h>
 #import <signal.h>
+
+static uint64_t g_wizard_base = 0;
+static uint64_t g_last_key_value = 0;
+static uint64_t g_last_meta_value = 0;
 
 // ── Anti-tamper ──
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
@@ -32,9 +35,8 @@ static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
 
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizKey] === v61 START ===");
+    NSLog(@"[WizKey] === v62 KEY TRACER START ===");
 
-    // Signal handler
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = anti_tamper_handler;
@@ -43,7 +45,7 @@ static void wizard_bypass_init(void) {
     sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGSEGV, &sa, NULL);
 
-    // Hook jsafbSAHCN NOP
+    // NOP jsafbSAHCN
     Class wksClass = objc_getClass("Wksahfnasj");
     if (wksClass) {
         Method m = class_getInstanceMethod(wksClass, sel_registerName("jsafbSAHCN"));
@@ -53,23 +55,75 @@ static void wizard_bypass_init(void) {
         }
     }
 
-    // Hook buttonTapped: (still useful if popup appears)
+    // Hook buttonTapped: to log text field content + key value
     Class sclAlert = objc_getClass("SCLAlertView");
     if (sclAlert) {
         Method m = class_getInstanceMethod(sclAlert, sel_registerName("buttonTapped:"));
         if (m) {
             void (*orig)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(m);
             method_setImplementation(m, imp_implementationWithBlock(^(id self, id button) {
-                NSLog(@"[WizKey] buttonTapped: clearing validation");
-                ((void(*)(id, SEL, id))objc_msgSend)(button, sel_registerName("setValidationBlock:"), nil);
+                // Read text field content
+                @try {
+                    // Get all subviews to find SCLTextView
+                    id contentView = ((id(*)(id,SEL))objc_msgSend)(self, sel_registerName("view"));
+                    if (contentView) {
+                        NSArray *subviews = ((id(*)(id,SEL))objc_msgSend)(contentView, sel_registerName("subviews"));
+                        for (id sv in subviews) {
+                            NSArray *inner = ((id(*)(id,SEL))objc_msgSend)(sv, sel_registerName("subviews"));
+                            for (id isv in inner) {
+                                if ([isv isKindOfClass:[UITextField class]]) {
+                                    NSString *text = ((id(*)(id,SEL))objc_msgSend)(isv, sel_registerName("text"));
+                                    NSLog(@"[WizKey] TEXT FIELD VALUE: '%@'", text);
+                                    
+                                    // Get bytes of text
+                                    NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+                                    NSLog(@"[WizKey] TEXT BYTES: %@", data);
+                                    NSLog(@"[WizKey] TEXT LENGTH: %lu", (unsigned long)data.length);
+                                }
+                            }
+                        }
+                    }
+                } @catch (NSException *e) {
+                    NSLog(@"[WizKey] text read error: %@", e);
+                }
+
+                // Log key QWORD BEFORE validation
+                if (g_wizard_base) {
+                    uint64_t *keyPtr = (uint64_t *)(g_wizard_base + 0x1E73CE8);
+                    uint64_t *metaPtr = (uint64_t *)(g_wizard_base + 0x1E73CF0);
+                    NSLog(@"[WizKey] KEY QWORD BEFORE buttonTapped: 0x%016llX", *keyPtr);
+                    NSLog(@"[WizKey] META QWORD BEFORE buttonTapped: 0x%016llX", *metaPtr);
+                }
+
+                // Clear validation
+                ((void(*)(id,SEL,id))objc_msgSend)(button, sel_registerName("setValidationBlock:"), nil);
+                NSLog(@"[WizKey] validationBlock cleared");
+
+                // Call original
                 orig(self, sel_registerName("buttonTapped:"), button);
+
+                // Log key QWORD AFTER
+                if (g_wizard_base) {
+                    uint64_t *keyPtr = (uint64_t *)(g_wizard_base + 0x1E73CE8);
+                    uint64_t *metaPtr = (uint64_t *)(g_wizard_base + 0x1E73CF0);
+                    NSLog(@"[WizKey] KEY QWORD AFTER buttonTapped: 0x%016llX", *keyPtr);
+                    NSLog(@"[WizKey] META QWORD AFTER buttonTapped: 0x%016llX", *metaPtr);
+                }
             }));
-            NSLog(@"[WizKey] buttonTapped: hooked");
+            NSLog(@"[WizKey] buttonTapped: hooked with key tracing");
         }
     }
 
-    // Delayed: set config + auth + call IKAFHFDSAJ directly
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)),
+    // Hook SCLTextView (UITextField) textDidChange to catch key writes in real-time
+    Class sclText = objc_getClass("SCLTextView");
+    if (sclText) {
+        NSLog(@"[WizKey] SCLTextView class found");
+    } else {
+        NSLog(@"[WizKey] SCLTextView NOT found, will monitor via polling");
+    }
+
+    // Delayed: find Wizard base + start polling
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         intptr_t wizard_slide = 0;
         uint32_t count = _dyld_image_count();
@@ -81,22 +135,29 @@ static void wizard_bypass_init(void) {
             }
         }
         if (!wizard_slide) { NSLog(@"[WizKey] ERROR: Wizard not found!"); return; }
+
+        g_wizard_base = (uint64_t)wizard_slide;
         NSLog(@"[WizKey] Wizard slide: 0x%lx", (long)wizard_slide);
 
-        uint64_t base = (uint64_t)wizard_slide;
-        uint8_t *cfg = (uint8_t *)(base + 0x1B0B470);
-        uint8_t *auth = (uint8_t *)(base + 0x1B0B4A9);
+        uint64_t *keyPtr = (uint64_t *)(g_wizard_base + 0x1E73CE8);
+        uint64_t *metaPtr = (uint64_t *)(g_wizard_base + 0x1E73CF0);
 
-        // Set config flags
+        NSLog(@"[WizKey] INITIAL KEY QWORD: 0x%016llX", *keyPtr);
+        NSLog(@"[WizKey] INITIAL META QWORD: 0x%016llX", *metaPtr);
+
+        g_last_key_value = *keyPtr;
+        g_last_meta_value = *metaPtr;
+
+        // Set config + auth
+        uint8_t *cfg = (uint8_t *)(g_wizard_base + 0x1B0B470);
+        uint8_t *auth = (uint8_t *)(g_wizard_base + 0x1B0B4A9);
         cfg[0]=1; cfg[1]=1; cfg[2]=1; cfg[3]=1;
-        cfg[4]=1; // USE HARDCODED ICON — no valid key needed!
-        cfg[5]=1; cfg[6]=0; cfg[7]=1;
-        memcpy(cfg+8,  (void*)(base+0xFD6820), 16);
-        memcpy(cfg+24, (void*)(base+0xFD6830), 16);
-        memcpy((void*)(base+0x1B0B498), (void*)(base+0xFD6840), 16);
-        memcpy((void*)(base+0x1B0B4B0), (void*)(base+0xFD6850), 16);
-        memcpy((void*)(base+0x1B0B4C0), (void*)(base+0xFD6860), 16);
-
+        cfg[4]=1; cfg[5]=1; cfg[6]=0; cfg[7]=1;
+        memcpy(cfg+8,  (void*)(g_wizard_base+0xFD6820), 16);
+        memcpy(cfg+24, (void*)(g_wizard_base+0xFD6830), 16);
+        memcpy((void*)(g_wizard_base+0x1B0B498), (void*)(g_wizard_base+0xFD6840), 16);
+        memcpy((void*)(g_wizard_base+0x1B0B4B0), (void*)(g_wizard_base+0xFD6850), 16);
+        memcpy((void*)(g_wizard_base+0x1B0B4C0), (void*)(g_wizard_base+0xFD6860), 16);
         *auth = 1;
         NSLog(@"[WizKey] Config + auth set");
 
@@ -105,42 +166,31 @@ static void wizard_bypass_init(void) {
             while (1) { usleep(50000); if (*auth != 1) *auth = 1; }
         });
 
-        // ═══════════════════════════════════════════════════════
-        // DIRECT CALL: Find ABVJSMGADJS instance and call IKAFHFDSAJ
-        // Bypass the popup entirely!
-        // ═══════════════════════════════════════════════════════
-        Class abvClass = objc_getClass("ABVJSMGADJS");
-        if (!abvClass) {
-            NSLog(@"[WizKey] ERROR: ABVJSMGADJS not found!");
-            return;
-        }
-
-        // Try to find existing instance via sharedInstance or similar
-        id abvInstance = nil;
-
-        // Method 1: Check if there's a shared/singleton accessor
-        if ([abvClass respondsToSelector:sel_registerName("sharedInstance")]) {
-            abvInstance = ((id(*)(id, SEL))objc_msgSend)((id)abvClass, sel_registerName("sharedInstance"));
-            NSLog(@"[WizKey] Found via sharedInstance");
-        }
-
-        // Method 2: alloc/init
-        if (!abvInstance) {
-            abvInstance = ((id(*)(id, SEL))objc_msgSend)(
-                ((id(*)(id, SEL))objc_msgSend)((id)abvClass, sel_registerName("alloc")),
-                sel_registerName("init")
-            );
-            NSLog(@"[WizKey] Created new ABVJSMGADJS instance");
-        }
-
-        if (abvInstance) {
-            NSLog(@"[WizKey] *** CALLING IKAFHFDSAJ DIRECTLY ***");
-            @try {
-                ((void(*)(id, SEL))objc_msgSend)(abvInstance, sel_registerName("IKAFHFDSAJ"));
-                NSLog(@"[WizKey] *** IKAFHFDSAJ returned! Menu should be visible! ***");
-            } @catch (NSException *e) {
-                NSLog(@"[WizKey] IKAFHFDSAJ exception: %@", e);
+        // POLL: monitor 0x1E73CE8 for changes every 100ms
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            while (1) {
+                usleep(100000); // 100ms
+                uint64_t curKey = *keyPtr;
+                uint64_t curMeta = *metaPtr;
+                if (curKey != g_last_key_value) {
+                    NSLog(@"[WizKey] *** KEY CHANGED! 0x%016llX → 0x%016llX ***", g_last_key_value, curKey);
+                    // Dump as bytes
+                    uint8_t *kb = (uint8_t *)keyPtr;
+                    NSLog(@"[WizKey] KEY BYTES: %02x %02x %02x %02x %02x %02x %02x %02x",
+                          kb[0], kb[1], kb[2], kb[3], kb[4], kb[5], kb[6], kb[7]);
+                    // Dump as ASCII
+                    char ascii[9] = {0};
+                    for (int i=0; i<8; i++) ascii[i] = (kb[i] >= 0x20 && kb[i] < 0x7F) ? kb[i] : '.';
+                    NSLog(@"[WizKey] KEY ASCII: '%s'", ascii);
+                    g_last_key_value = curKey;
+                }
+                if (curMeta != g_last_meta_value) {
+                    NSLog(@"[WizKey] *** META CHANGED! 0x%016llX → 0x%016llX ***", g_last_meta_value, curMeta);
+                    g_last_meta_value = curMeta;
+                }
             }
-        }
+        });
+
+        NSLog(@"[WizKey] === READY — Type a key, tap submit! Watch for KEY CHANGED logs ===");
     });
 }
