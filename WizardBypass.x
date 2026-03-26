@@ -180,7 +180,10 @@ static void wizard_bypass_init(void) {
                     // But log the result
                     if (valBlock) {
                         NSLog(@"[WizKey] Calling validationBlock to see result...");
-                        BOOL result = ((BOOL(*)(id))valBlock)(valBlock);
+                        typedef BOOL (*BlockInvoke)(const void *);
+                        struct Block_layout *vbl = (__bridge struct Block_layout *)valBlock;
+                        BlockInvoke invokeFunc = (BlockInvoke)vbl->invoke;
+                        BOOL result = invokeFunc((__bridge const void *)valBlock);
                         NSLog(@"[WizKey] validationBlock returned: %d", result);
                     }
                 } @catch (NSException *e) {
