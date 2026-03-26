@@ -1,6 +1,6 @@
-// WizardBypass v66 — DECISION POINT FINDER
-// Captures stack trace when the error "Exit" popup is created
-// This reveals which function in the obfuscation chain makes the valid/invalid decision
+// WizardBypass v67 — PROPER BYPASS (Any Key Works)
+// Captures the real ABVJSMGADJS singleton, suppresses error popup,
+// and calls IKAFHFDSAJ on the real instance after any key submission.
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -8,12 +8,11 @@
 #import <objc/message.h>
 #import <mach-o/dyld.h>
 #import <signal.h>
-#import <execinfo.h>
-#import <dlfcn.h>
 
 static uint64_t g_wizard_base = 0;
 static intptr_t g_wizard_slide = 0;
-static CFAbsoluteTime g_last_tap_time = 0;
+static id g_real_singleton = nil;
+static BOOL g_key_submitted = NO;
 
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     ucontext_t *uc = (ucontext_t *)context;
@@ -35,42 +34,9 @@ static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     }
 }
 
-// Walk the frame pointer chain manually for better results
-static void log_stack_trace(void) {
-    NSLog(@"[WizKey] === STACK TRACE (frame pointer walk) ===");
-    void *fp = __builtin_frame_address(0);
-
-    for (int i = 0; i < 30 && fp != NULL; i++) {
-        void **frame = (void **)fp;
-        void *ret_addr = frame[1];
-
-        if ((uint64_t)ret_addr < 0x1000) break;
-
-        uint64_t addr = (uint64_t)ret_addr;
-        uint64_t unslid = addr - g_wizard_slide;
-
-        // Check if address is in Wizard binary (rough range check)
-        if (unslid > 0x100000 && unslid < 0x2000000) {
-            NSLog(@"[WizKey]   frame[%d]: %p (WIZARD unslid: 0x%llX) <<<", i, ret_addr, unslid);
-        } else {
-            Dl_info info;
-            if (dladdr(ret_addr, &info) && info.dli_fname) {
-                const char *basename = strrchr(info.dli_fname, '/');
-                basename = basename ? basename + 1 : info.dli_fname;
-                NSLog(@"[WizKey]   frame[%d]: %p (%s)", i, ret_addr, basename);
-            } else {
-                NSLog(@"[WizKey]   frame[%d]: %p", i, ret_addr);
-            }
-        }
-
-        fp = frame[0]; // next frame
-    }
-    NSLog(@"[WizKey] === END STACK TRACE ===");
-}
-
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizKey] === v66 DECISION FINDER START ===");
+    NSLog(@"[WizKey] === v67 PROPER BYPASS START ===");
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -90,60 +56,76 @@ static void wizard_bypass_init(void) {
         }
     }
 
-    // Hook IKAFHFDSAJ (success detector)
+    // Hook ABVJSMGADJS init to capture the REAL singleton
     Class abvClass = objc_getClass("ABVJSMGADJS");
     if (abvClass) {
-        Method m = class_getInstanceMethod(abvClass, sel_registerName("IKAFHFDSAJ"));
-        if (m) {
-            void (*orig_ik)(id, SEL) = (void (*)(id, SEL))method_getImplementation(m);
-            method_setImplementation(m, imp_implementationWithBlock(^(id self) {
-                NSLog(@"[WizKey] *** IKAFHFDSAJ CALLED! VALID KEY! ***");
-                log_stack_trace();
-                orig_ik(self, sel_registerName("IKAFHFDSAJ"));
+        Method initM = class_getInstanceMethod(abvClass, sel_registerName("init"));
+        if (initM) {
+            id (*orig_init)(id, SEL) = (id (*)(id, SEL))method_getImplementation(initM);
+            method_setImplementation(initM, imp_implementationWithBlock(^id(id self) {
+                id result = orig_init(self, sel_registerName("init"));
+                g_real_singleton = result;
+                NSLog(@"[WizKey] *** ABVJSMGADJS singleton captured: %p ***", result);
+                return result;
             }));
+            NSLog(@"[WizKey] ABVJSMGADJS init hooked");
         }
     }
 
+    // Hook SCLAlertView to:
+    // 1. Suppress the error "Exit" popup after key submission
+    // 2. On OK button tap, trigger IKAFHFDSAJ on real singleton
     Class sclAlert = objc_getClass("SCLAlertView");
     if (sclAlert) {
-        // Hook addButton:actionBlock: — when "Exit" is added DURING button tap,
-        // capture stack trace to find the decision function
-        SEL addBtnSel = sel_registerName("addButton:actionBlock:");
-        Method m2 = class_getInstanceMethod(sclAlert, addBtnSel);
-        if (m2) {
-            void (*orig)(id, SEL, id, id) = (void (*)(id, SEL, id, id))method_getImplementation(m2);
-            method_setImplementation(m2, imp_implementationWithBlock(
-                ^(id self, id title, id actBlock) {
-                    NSLog(@"[WizKey] addButton: '%@'", title);
-
-                    // If "Exit" button created within 5s of button tap → error popup
-                    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-                    if ([title isEqualToString:@"Exit"] && (now - g_last_tap_time) < 5.0 && g_last_tap_time > 0) {
-                        NSLog(@"[WizKey] *** ERROR POPUP CREATED %.1fs AFTER TAP — CAPTURING DECISION POINT ***", now - g_last_tap_time);
-                        log_stack_trace();
+        // Hook showError to suppress it after key submission
+        SEL showErrSel = sel_registerName("showError:title:subTitle:closeButtonTitle:duration:");
+        Method showErrM = class_getInstanceMethod(sclAlert, showErrSel);
+        if (showErrM) {
+            void (*orig_showErr)(id, SEL, id, id, id, id, float) =
+                (void (*)(id, SEL, id, id, id, id, float))method_getImplementation(showErrM);
+            method_setImplementation(showErrM, imp_implementationWithBlock(
+                ^(id self, id vc, id title, id subtitle, id closeBtn, float duration) {
+                    if (g_key_submitted) {
+                        NSLog(@"[WizKey] *** SUPPRESSED error popup! ***");
+                        g_key_submitted = NO;
+                        // Don't show the error popup — silently discard it
+                        return;
                     }
-
-                    orig(self, addBtnSel, title, actBlock);
+                    // Show non-key-related errors normally
+                    orig_showErr(self, showErrSel, vc, title, subtitle, closeBtn, duration);
                 }
             ));
-            NSLog(@"[WizKey] addButton:actionBlock: HOOKED");
+            NSLog(@"[WizKey] showError: hooked (suppressor)");
         }
 
-        // Hook buttonTapped: with tap tracking
-        Method m3 = class_getInstanceMethod(sclAlert, sel_registerName("buttonTapped:"));
-        if (m3) {
-            void (*orig_tap)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(m3);
-            method_setImplementation(m3, imp_implementationWithBlock(^(id self, id button) {
-                NSLog(@"[WizKey] buttonTapped: START");
-                g_last_tap_time = CFAbsoluteTimeGetCurrent();
+        // Hook buttonTapped: to detect OK tap and trigger IKAFHFDSAJ
+        Method tapM = class_getInstanceMethod(sclAlert, sel_registerName("buttonTapped:"));
+        if (tapM) {
+            void (*orig_tap)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(tapM);
+            method_setImplementation(tapM, imp_implementationWithBlock(^(id self, id button) {
+                NSLog(@"[WizKey] buttonTapped: fired");
+                g_key_submitted = YES;
+
+                // Call original (chain will try to show error, but we suppress it)
                 orig_tap(self, sel_registerName("buttonTapped:"), button);
-                NSLog(@"[WizKey] buttonTapped: END");
+
+                // After a short delay, call IKAFHFDSAJ on the real singleton
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                    dispatch_get_main_queue(), ^{
+                    if (g_real_singleton) {
+                        NSLog(@"[WizKey] *** Calling IKAFHFDSAJ on real singleton %p ***", g_real_singleton);
+                        ((void(*)(id, SEL))objc_msgSend)(g_real_singleton, sel_registerName("IKAFHFDSAJ"));
+                        NSLog(@"[WizKey] *** IKAFHFDSAJ called! Menu should appear! ***");
+                    } else {
+                        NSLog(@"[WizKey] ERROR: No singleton captured yet");
+                    }
+                });
             }));
-            NSLog(@"[WizKey] buttonTapped: hooked");
+            NSLog(@"[WizKey] buttonTapped: hooked (bypass trigger)");
         }
     }
 
-    // Delayed config
+    // Delayed config setup
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         uint32_t count = _dyld_image_count();
@@ -155,9 +137,10 @@ static void wizard_bypass_init(void) {
                 break;
             }
         }
-        if (!g_wizard_slide) return;
+        if (!g_wizard_slide) { NSLog(@"[WizKey] ERROR: Wizard not found!"); return; }
         NSLog(@"[WizKey] Wizard slide: 0x%lx", (long)g_wizard_slide);
 
+        // Config bytes
         uint8_t *cfg = (uint8_t *)(g_wizard_base + 0x1B0B470);
         uint8_t *auth = (uint8_t *)(g_wizard_base + 0x1B0B4A9);
         cfg[0]=1; cfg[1]=1; cfg[2]=1; cfg[3]=1;
@@ -168,11 +151,13 @@ static void wizard_bypass_init(void) {
         memcpy((void*)(g_wizard_base+0x1B0B4B0), (void*)(g_wizard_base+0xFD6850), 16);
         memcpy((void*)(g_wizard_base+0x1B0B4C0), (void*)(g_wizard_base+0xFD6860), 16);
         *auth = 1;
+        NSLog(@"[WizKey] Config + auth set");
 
+        // Auth enforcer
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
             while (1) { usleep(50000); if (*auth != 1) *auth = 1; }
         });
 
-        NSLog(@"[WizKey] === READY — Type key, tap OK, watch for DECISION POINT ===");
+        NSLog(@"[WizKey] === READY — Type anything, tap OK, menu will appear! ===");
     });
 }
