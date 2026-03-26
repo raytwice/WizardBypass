@@ -75,22 +75,24 @@ static void wizard_bypass_init(void) {
     SEL dtSel = sel_registerName("dataTaskWithRequest:completionHandler:");
     Method dtM = class_getInstanceMethod(sessionClass, dtSel);
     if (dtM) {
-        void (*orig_dt)(id, SEL, id, id) = (void (*)(id, SEL, id, id))method_getImplementation(dtM);
+        typedef NSURLSessionDataTask* (*OrigDT)(id, SEL, NSURLRequest*, id);
+        OrigDT orig_dt = (OrigDT)method_getImplementation(dtM);
         method_setImplementation(dtM, imp_implementationWithBlock(
-            ^(id self, NSURLRequest *request, id completion) {
-                g_network_called = YES;
-                NSLog(@"[WizKey] *** NETWORK: dataTaskWithRequest ***");
-                NSLog(@"[WizKey]   URL: %@", request.URL);
-                NSLog(@"[WizKey]   Method: %@", request.HTTPMethod);
-                if (request.HTTPBody) {
-                    NSString *body = [[NSString alloc] initWithData:request.HTTPBody encoding:NSUTF8StringEncoding];
-                    NSLog(@"[WizKey]   Body: %@", body);
+            ^NSURLSessionDataTask*(id self, NSURLRequest *request, id completion) {
+                NSString *urlStr = request.URL.absoluteString;
+                // Only log non-Facebook calls (Wizard's own network)
+                if (![urlStr containsString:@"facebook.com"] &&
+                    ![urlStr containsString:@"apple.com"]) {
+                    g_network_called = YES;
+                    NSLog(@"[WizKey] *** NETWORK ***");
+                    NSLog(@"[WizKey]   URL: %@", urlStr);
+                    NSLog(@"[WizKey]   Method: %@", request.HTTPMethod);
+                    if (request.HTTPBody) {
+                        NSString *body = [[NSString alloc] initWithData:request.HTTPBody encoding:NSUTF8StringEncoding];
+                        NSLog(@"[WizKey]   Body: %@", body);
+                    }
                 }
-                NSDictionary *headers = request.allHTTPHeaderFields;
-                if (headers) {
-                    NSLog(@"[WizKey]   Headers: %@", headers);
-                }
-                orig_dt(self, dtSel, request, completion);
+                return orig_dt(self, dtSel, request, completion);
             }
         ));
         NSLog(@"[WizKey] NSURLSession dataTask hooked");
@@ -100,13 +102,17 @@ static void wizard_bypass_init(void) {
     SEL dtUrlSel = sel_registerName("dataTaskWithURL:completionHandler:");
     Method dtUrlM = class_getInstanceMethod(sessionClass, dtUrlSel);
     if (dtUrlM) {
-        void (*orig_dtu)(id, SEL, id, id) = (void (*)(id, SEL, id, id))method_getImplementation(dtUrlM);
+        typedef NSURLSessionDataTask* (*OrigDTU)(id, SEL, NSURL*, id);
+        OrigDTU orig_dtu = (OrigDTU)method_getImplementation(dtUrlM);
         method_setImplementation(dtUrlM, imp_implementationWithBlock(
-            ^(id self, NSURL *url, id completion) {
-                g_network_called = YES;
-                NSLog(@"[WizKey] *** NETWORK: dataTaskWithURL ***");
-                NSLog(@"[WizKey]   URL: %@", url);
-                orig_dtu(self, dtUrlSel, url, completion);
+            ^NSURLSessionDataTask*(id self, NSURL *url, id completion) {
+                NSString *urlStr = url.absoluteString;
+                if (![urlStr containsString:@"facebook.com"] &&
+                    ![urlStr containsString:@"apple.com"]) {
+                    g_network_called = YES;
+                    NSLog(@"[WizKey] *** NETWORK: %@ ***", urlStr);
+                }
+                return orig_dtu(self, dtUrlSel, url, completion);
             }
         ));
     }
@@ -117,13 +123,13 @@ static void wizard_bypass_init(void) {
         SEL syncSel = sel_registerName("sendSynchronousRequest:returningResponse:error:");
         Method syncM = class_getClassMethod(connClass, syncSel);
         if (syncM) {
-            void (*orig_sync)(id, SEL, id, id, id) = (void (*)(id, SEL, id, id, id))method_getImplementation(syncM);
+            typedef NSData* (*OrigSync)(id, SEL, id, id, id);
+            OrigSync orig_sync = (OrigSync)method_getImplementation(syncM);
             method_setImplementation(syncM, imp_implementationWithBlock(
-                ^(id self, NSURLRequest *req, id resp, id err) {
+                ^NSData*(id self, NSURLRequest *req, id resp, id err) {
                     g_network_called = YES;
-                    NSLog(@"[WizKey] *** NETWORK: sendSynchronousRequest ***");
-                    NSLog(@"[WizKey]   URL: %@", req.URL);
-                    orig_sync(self, syncSel, req, resp, err);
+                    NSLog(@"[WizKey] *** NETWORK SYNC: %@ ***", req.URL);
+                    return orig_sync(self, syncSel, req, resp, err);
                 }
             ));
         }
