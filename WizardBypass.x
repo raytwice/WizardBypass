@@ -13,7 +13,7 @@
 
 static uint64_t g_wizard_base = 0;
 static intptr_t g_wizard_slide = 0;
-static BOOL g_in_button_tap = NO;
+static CFAbsoluteTime g_last_tap_time = 0;
 
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     ucontext_t *uc = (ucontext_t *)context;
@@ -114,11 +114,12 @@ static void wizard_bypass_init(void) {
             void (*orig)(id, SEL, id, id) = (void (*)(id, SEL, id, id))method_getImplementation(m2);
             method_setImplementation(m2, imp_implementationWithBlock(
                 ^(id self, id title, id actBlock) {
-                    NSLog(@"[WizKey] addButton: '%@' (during_tap: %@)", title, g_in_button_tap ? @"YES" : @"NO");
+                    NSLog(@"[WizKey] addButton: '%@'", title);
 
-                    // If "Exit" button created DURING our button tap → this is the error popup!
-                    if (g_in_button_tap && [title isEqualToString:@"Exit"]) {
-                        NSLog(@"[WizKey] *** ERROR POPUP CREATED — CAPTURING DECISION POINT ***");
+                    // If "Exit" button created within 5s of button tap → error popup
+                    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+                    if ([title isEqualToString:@"Exit"] && (now - g_last_tap_time) < 5.0 && g_last_tap_time > 0) {
+                        NSLog(@"[WizKey] *** ERROR POPUP CREATED %.1fs AFTER TAP — CAPTURING DECISION POINT ***", now - g_last_tap_time);
                         log_stack_trace();
                     }
 
@@ -134,9 +135,8 @@ static void wizard_bypass_init(void) {
             void (*orig_tap)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(m3);
             method_setImplementation(m3, imp_implementationWithBlock(^(id self, id button) {
                 NSLog(@"[WizKey] buttonTapped: START");
-                g_in_button_tap = YES;
+                g_last_tap_time = CFAbsoluteTimeGetCurrent();
                 orig_tap(self, sel_registerName("buttonTapped:"), button);
-                g_in_button_tap = NO;
                 NSLog(@"[WizKey] buttonTapped: END");
             }));
             NSLog(@"[WizKey] buttonTapped: hooked");
