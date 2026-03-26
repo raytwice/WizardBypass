@@ -1,9 +1,6 @@
-// WizardBypass v64 — RUNTIME KEY TESTER
-// Since static analysis hits obfuscation wall (indirect BR jumps),
-// we test keys dynamically: hook the OK button handler (0x78702C),
-// programmatically set text field values, and observe the outcome.
-// We detect success by monitoring if IKAFHFDSAJ is called or if
-// the menu views are created.
+// WizardBypass v65 — NETWORK DETECTOR + KEY FORMAT TESTER
+// Hooks NSURLSession to detect if key validation is server-side
+// Tests the real key format (32 alphanumeric chars)
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -23,8 +20,8 @@ struct Block_layout {
 static uint64_t g_wizard_base = 0;
 static intptr_t g_wizard_slide = 0;
 static BOOL g_ikafhfdsaj_called = NO;
+static BOOL g_network_called = NO;
 static id g_captured_textfield = nil;
-static id g_captured_alert = nil;
 static id g_ok_action_block = nil;
 
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
@@ -49,7 +46,7 @@ static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
 
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizKey] === v64 RUNTIME KEY TESTER START ===");
+    NSLog(@"[WizKey] === v65 NETWORK DETECTOR START ===");
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -69,40 +66,97 @@ static void wizard_bypass_init(void) {
         }
     }
 
-    // Hook IKAFHFDSAJ to detect when a valid key triggers it
+    // ═══════════════════════════════════════
+    // HOOK ALL NETWORK METHODS
+    // ═══════════════════════════════════════
+
+    // Hook NSURLSession dataTaskWithRequest:completionHandler:
+    Class sessionClass = [NSURLSession class];
+    SEL dtSel = sel_registerName("dataTaskWithRequest:completionHandler:");
+    Method dtM = class_getInstanceMethod(sessionClass, dtSel);
+    if (dtM) {
+        void (*orig_dt)(id, SEL, id, id) = (void (*)(id, SEL, id, id))method_getImplementation(dtM);
+        method_setImplementation(dtM, imp_implementationWithBlock(
+            ^(id self, NSURLRequest *request, id completion) {
+                g_network_called = YES;
+                NSLog(@"[WizKey] *** NETWORK: dataTaskWithRequest ***");
+                NSLog(@"[WizKey]   URL: %@", request.URL);
+                NSLog(@"[WizKey]   Method: %@", request.HTTPMethod);
+                if (request.HTTPBody) {
+                    NSString *body = [[NSString alloc] initWithData:request.HTTPBody encoding:NSUTF8StringEncoding];
+                    NSLog(@"[WizKey]   Body: %@", body);
+                }
+                NSDictionary *headers = request.allHTTPHeaderFields;
+                if (headers) {
+                    NSLog(@"[WizKey]   Headers: %@", headers);
+                }
+                orig_dt(self, dtSel, request, completion);
+            }
+        ));
+        NSLog(@"[WizKey] NSURLSession dataTask hooked");
+    }
+
+    // Hook NSURLSession dataTaskWithURL:completionHandler:
+    SEL dtUrlSel = sel_registerName("dataTaskWithURL:completionHandler:");
+    Method dtUrlM = class_getInstanceMethod(sessionClass, dtUrlSel);
+    if (dtUrlM) {
+        void (*orig_dtu)(id, SEL, id, id) = (void (*)(id, SEL, id, id))method_getImplementation(dtUrlM);
+        method_setImplementation(dtUrlM, imp_implementationWithBlock(
+            ^(id self, NSURL *url, id completion) {
+                g_network_called = YES;
+                NSLog(@"[WizKey] *** NETWORK: dataTaskWithURL ***");
+                NSLog(@"[WizKey]   URL: %@", url);
+                orig_dtu(self, dtUrlSel, url, completion);
+            }
+        ));
+    }
+
+    // Hook NSURLConnection sendSynchronousRequest (legacy)
+    Class connClass = objc_getClass("NSURLConnection");
+    if (connClass) {
+        SEL syncSel = sel_registerName("sendSynchronousRequest:returningResponse:error:");
+        Method syncM = class_getClassMethod(connClass, syncSel);
+        if (syncM) {
+            void (*orig_sync)(id, SEL, id, id, id) = (void (*)(id, SEL, id, id, id))method_getImplementation(syncM);
+            method_setImplementation(syncM, imp_implementationWithBlock(
+                ^(id self, NSURLRequest *req, id resp, id err) {
+                    g_network_called = YES;
+                    NSLog(@"[WizKey] *** NETWORK: sendSynchronousRequest ***");
+                    NSLog(@"[WizKey]   URL: %@", req.URL);
+                    orig_sync(self, syncSel, req, resp, err);
+                }
+            ));
+        }
+    }
+    NSLog(@"[WizKey] Network hooks installed");
+
+    // Hook IKAFHFDSAJ
     Class abvClass = objc_getClass("ABVJSMGADJS");
     if (abvClass) {
         Method m = class_getInstanceMethod(abvClass, sel_registerName("IKAFHFDSAJ"));
         if (m) {
             void (*orig_ik)(id, SEL) = (void (*)(id, SEL))method_getImplementation(m);
             method_setImplementation(m, imp_implementationWithBlock(^(id self) {
-                NSLog(@"[WizKey] *** IKAFHFDSAJ CALLED! KEY IS VALID! ***");
+                NSLog(@"[WizKey] *** IKAFHFDSAJ CALLED! ***");
                 g_ikafhfdsaj_called = YES;
                 orig_ik(self, sel_registerName("IKAFHFDSAJ"));
             }));
-            NSLog(@"[WizKey] IKAFHFDSAJ hooked (success detector)");
         }
     }
 
+    // Hook SCLAlertView
     Class sclAlert = objc_getClass("SCLAlertView");
     if (sclAlert) {
-        // Hook addButton:actionBlock: to capture the OK block + alert instance
         SEL addBtnActSel = sel_registerName("addButton:actionBlock:");
         Method m2 = class_getInstanceMethod(sclAlert, addBtnActSel);
         if (m2) {
-            void (*orig_addBtnAct)(id, SEL, id, id) =
-                (void (*)(id, SEL, id, id))method_getImplementation(m2);
-
+            void (*orig)(id, SEL, id, id) = (void (*)(id, SEL, id, id))method_getImplementation(m2);
             method_setImplementation(m2, imp_implementationWithBlock(
                 ^(id self, id title, id actBlock) {
-                    NSLog(@"[WizKey] addButton:actionBlock: '%@'", title);
-
+                    NSLog(@"[WizKey] addButton: '%@'", title);
                     if ([title isEqualToString:@"OK"] || [title isEqualToString:@"Submit"]) {
-                        g_captured_alert = self;
                         g_ok_action_block = [actBlock copy];
-                        NSLog(@"[WizKey] *** OK button captured! Alert: %p, Block: %p ***", self, actBlock);
-
-                        // Find text field in alert
+                        // Find text field
                         @try {
                             id view = ((id(*)(id,SEL))objc_msgSend)(self, sel_registerName("view"));
                             if (view) {
@@ -112,52 +166,46 @@ static void wizard_bypass_init(void) {
                                     for (id isv in inner) {
                                         if ([isv isKindOfClass:[UITextField class]]) {
                                             g_captured_textfield = isv;
-                                            NSLog(@"[WizKey] Text field captured: %p", isv);
+                                            NSLog(@"[WizKey] Text field captured");
                                         }
                                     }
                                 }
                             }
                         } @catch (NSException *e) {}
                     }
-
-                    orig_addBtnAct(self, addBtnActSel, title, actBlock);
+                    orig(self, addBtnActSel, title, actBlock);
                 }
             ));
-            NSLog(@"[WizKey] addButton:actionBlock: HOOKED");
         }
 
-        // Hook hideView to detect popup dismissal
-        Method m3 = class_getInstanceMethod(sclAlert, sel_registerName("hideView:"));
+        // Hook buttonTapped:
+        Method m3 = class_getInstanceMethod(sclAlert, sel_registerName("buttonTapped:"));
         if (m3) {
-            void (*orig_hide)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(m3);
-            method_setImplementation(m3, imp_implementationWithBlock(^(id self, id completion) {
-                NSLog(@"[WizKey] hideView: called (popup closing)");
-                orig_hide(self, sel_registerName("hideView:"), completion);
-            }));
-        }
+            void (*orig_tap)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(m3);
+            method_setImplementation(m3, imp_implementationWithBlock(^(id self, id button) {
+                g_network_called = NO;
+                g_ikafhfdsaj_called = NO;
 
-        // Hook buttonTapped: to log and let through
-        Method m4 = class_getInstanceMethod(sclAlert, sel_registerName("buttonTapped:"));
-        if (m4) {
-            void (*orig_tap)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(m4);
-            method_setImplementation(m4, imp_implementationWithBlock(^(id self, id button) {
-                // Get current text
+                NSString *text = nil;
                 if (g_captured_textfield) {
-                    NSString *text = ((id(*)(id,SEL))objc_msgSend)(g_captured_textfield, sel_registerName("text"));
-                    NSLog(@"[WizKey] buttonTapped with key: '%@'", text);
+                    text = ((id(*)(id,SEL))objc_msgSend)(g_captured_textfield, sel_registerName("text"));
+                    NSLog(@"[WizKey] buttonTapped key: '%@' (len=%lu)", text, (unsigned long)text.length);
                 }
+
                 orig_tap(self, sel_registerName("buttonTapped:"), button);
 
-                // Check if IKAFHFDSAJ was triggered
-                if (g_ikafhfdsaj_called) {
-                    NSLog(@"[WizKey] *** SUCCESS! IKAFHFDSAJ was called after button tap! ***");
-                }
+                // Check results after 2 seconds (for async network)
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                    dispatch_get_main_queue(), ^{
+                    NSLog(@"[WizKey] === POST-TAP RESULTS ===");
+                    NSLog(@"[WizKey]   Network called: %@", g_network_called ? @"YES ← SERVER VALIDATION!" : @"NO (local)");
+                    NSLog(@"[WizKey]   IKAFHFDSAJ called: %@", g_ikafhfdsaj_called ? @"YES ← VALID KEY!" : @"NO");
+                });
             }));
-            NSLog(@"[WizKey] buttonTapped: hooked");
         }
     }
 
-    // Delayed: resolve slide + config + start key testing
+    // Delayed config
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         uint32_t count = _dyld_image_count();
@@ -169,10 +217,9 @@ static void wizard_bypass_init(void) {
                 break;
             }
         }
-        if (!g_wizard_slide) { NSLog(@"[WizKey] ERROR: Wizard not found!"); return; }
+        if (!g_wizard_slide) return;
         NSLog(@"[WizKey] Wizard slide: 0x%lx", (long)g_wizard_slide);
 
-        // Config + auth
         uint8_t *cfg = (uint8_t *)(g_wizard_base + 0x1B0B470);
         uint8_t *auth = (uint8_t *)(g_wizard_base + 0x1B0B4A9);
         cfg[0]=1; cfg[1]=1; cfg[2]=1; cfg[3]=1;
@@ -183,74 +230,11 @@ static void wizard_bypass_init(void) {
         memcpy((void*)(g_wizard_base+0x1B0B4B0), (void*)(g_wizard_base+0xFD6850), 16);
         memcpy((void*)(g_wizard_base+0x1B0B4C0), (void*)(g_wizard_base+0xFD6860), 16);
         *auth = 1;
-        NSLog(@"[WizKey] Config + auth set");
 
-        // Auth enforcer
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
             while (1) { usleep(50000); if (*auth != 1) *auth = 1; }
         });
 
-        // Wait for popup to appear, then start testing keys after 10s
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10.0 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            if (!g_ok_action_block) {
-                NSLog(@"[WizKey] No OK block captured yet — enter popup first, then keys will be tested");
-                return;
-            }
-
-            NSLog(@"[WizKey] === STARTING KEY TESTS ===");
-
-            // Get the block's invoke function
-            struct Block_layout *bl = (__bridge struct Block_layout *)g_ok_action_block;
-            typedef void (*BlockInvoke)(void *);
-            BlockInvoke invokeOK = (BlockInvoke)bl->invoke;
-
-            // Test various key formats
-            NSArray *testKeys = @[
-                @"0000-0000-0000-0000",
-                @"1234-5678-9ABC-DEF0",
-                @"AAAA-AAAA-AAAA-AAAA",
-                @"WIZARD",
-                @"wizard",
-                @"admin",
-                @"test",
-                @"1234567890",
-                @"ABCDEFGHIJ",
-                @"0000000000000000",
-                @"FFFFFFFFFFFFFFFF",
-                @"1111111111111111",
-            ];
-
-            for (NSString *key in testKeys) {
-                g_ikafhfdsaj_called = NO;
-
-                // Set text field value
-                if (g_captured_textfield) {
-                    ((void(*)(id,SEL,id))objc_msgSend)(g_captured_textfield,
-                        sel_registerName("setText:"), key);
-                }
-
-                NSLog(@"[WizKey] Testing key: '%@'", key);
-
-                // Call the OK button's action block
-                @try {
-                    invokeOK((__bridge void *)g_ok_action_block);
-                } @catch (NSException *e) {
-                    NSLog(@"[WizKey] Exception for key '%@': %@", key, e);
-                }
-
-                if (g_ikafhfdsaj_called) {
-                    NSLog(@"[WizKey] *** VALID KEY FOUND: '%@' ***", key);
-                    break;
-                }
-
-                // Small delay between tests
-                usleep(100000);
-            }
-
-            NSLog(@"[WizKey] === KEY TESTS COMPLETE ===");
-        });
-
-        NSLog(@"[WizKey] === READY — popup will appear, wait 10s for auto-testing ===");
+        NSLog(@"[WizKey] === READY — Type the key, tap OK, check POST-TAP RESULTS ===");
     });
 }
