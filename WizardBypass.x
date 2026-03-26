@@ -9,6 +9,7 @@
 #import <mach-o/dyld.h>
 #import <signal.h>
 #import <execinfo.h>
+#import <dlfcn.h>
 
 static uint64_t g_wizard_base = 0;
 static intptr_t g_wizard_slide = 0;
