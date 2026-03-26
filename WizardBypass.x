@@ -1,6 +1,6 @@
-// WizardBypass v65 — NETWORK DETECTOR + KEY FORMAT TESTER
-// Hooks NSURLSession to detect if key validation is server-side
-// Tests the real key format (32 alphanumeric chars)
+// WizardBypass v66 — DECISION POINT FINDER
+// Captures stack trace when the error "Exit" popup is created
+// This reveals which function in the obfuscation chain makes the valid/invalid decision
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -8,21 +8,11 @@
 #import <objc/message.h>
 #import <mach-o/dyld.h>
 #import <signal.h>
-
-struct Block_layout {
-    void *isa;
-    int flags;
-    int reserved;
-    void (*invoke)(void *, ...);
-    void *descriptor;
-};
+#import <execinfo.h>
 
 static uint64_t g_wizard_base = 0;
 static intptr_t g_wizard_slide = 0;
-static BOOL g_ikafhfdsaj_called = NO;
-static BOOL g_network_called = NO;
-static id g_captured_textfield = nil;
-static id g_ok_action_block = nil;
+static BOOL g_in_button_tap = NO;
 
 static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     ucontext_t *uc = (ucontext_t *)context;
@@ -44,9 +34,42 @@ static void anti_tamper_handler(int sig, siginfo_t *info, void *context) {
     }
 }
 
+// Walk the frame pointer chain manually for better results
+static void log_stack_trace(void) {
+    NSLog(@"[WizKey] === STACK TRACE (frame pointer walk) ===");
+    void *fp = __builtin_frame_address(0);
+
+    for (int i = 0; i < 30 && fp != NULL; i++) {
+        void **frame = (void **)fp;
+        void *ret_addr = frame[1];
+
+        if ((uint64_t)ret_addr < 0x1000) break;
+
+        uint64_t addr = (uint64_t)ret_addr;
+        uint64_t unslid = addr - g_wizard_slide;
+
+        // Check if address is in Wizard binary (rough range check)
+        if (unslid > 0x100000 && unslid < 0x2000000) {
+            NSLog(@"[WizKey]   frame[%d]: %p (WIZARD unslid: 0x%llX) <<<", i, ret_addr, unslid);
+        } else {
+            Dl_info info;
+            if (dladdr(ret_addr, &info) && info.dli_fname) {
+                const char *basename = strrchr(info.dli_fname, '/');
+                basename = basename ? basename + 1 : info.dli_fname;
+                NSLog(@"[WizKey]   frame[%d]: %p (%s)", i, ret_addr, basename);
+            } else {
+                NSLog(@"[WizKey]   frame[%d]: %p", i, ret_addr);
+            }
+        }
+
+        fp = frame[0]; // next frame
+    }
+    NSLog(@"[WizKey] === END STACK TRACE ===");
+}
+
 __attribute__((constructor))
 static void wizard_bypass_init(void) {
-    NSLog(@"[WizKey] === v65 NETWORK DETECTOR START ===");
+    NSLog(@"[WizKey] === v66 DECISION FINDER START ===");
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -66,148 +89,56 @@ static void wizard_bypass_init(void) {
         }
     }
 
-    // ═══════════════════════════════════════
-    // HOOK ALL NETWORK METHODS
-    // ═══════════════════════════════════════
-
-    // Hook NSURLSession dataTaskWithRequest:completionHandler:
-    Class sessionClass = [NSURLSession class];
-    SEL dtSel = sel_registerName("dataTaskWithRequest:completionHandler:");
-    Method dtM = class_getInstanceMethod(sessionClass, dtSel);
-    if (dtM) {
-        typedef NSURLSessionDataTask* (*OrigDT)(id, SEL, NSURLRequest*, id);
-        OrigDT orig_dt = (OrigDT)method_getImplementation(dtM);
-        method_setImplementation(dtM, imp_implementationWithBlock(
-            ^NSURLSessionDataTask*(id self, NSURLRequest *request, id completion) {
-                NSString *urlStr = request.URL.absoluteString;
-                // Only log non-Facebook calls (Wizard's own network)
-                if (![urlStr containsString:@"facebook.com"] &&
-                    ![urlStr containsString:@"apple.com"]) {
-                    g_network_called = YES;
-                    NSLog(@"[WizKey] *** NETWORK ***");
-                    NSLog(@"[WizKey]   URL: %@", urlStr);
-                    NSLog(@"[WizKey]   Method: %@", request.HTTPMethod);
-                    if (request.HTTPBody) {
-                        NSString *body = [[NSString alloc] initWithData:request.HTTPBody encoding:NSUTF8StringEncoding];
-                        NSLog(@"[WizKey]   Body: %@", body);
-                    }
-                }
-                return orig_dt(self, dtSel, request, completion);
-            }
-        ));
-        NSLog(@"[WizKey] NSURLSession dataTask hooked");
-    }
-
-    // Hook NSURLSession dataTaskWithURL:completionHandler:
-    SEL dtUrlSel = sel_registerName("dataTaskWithURL:completionHandler:");
-    Method dtUrlM = class_getInstanceMethod(sessionClass, dtUrlSel);
-    if (dtUrlM) {
-        typedef NSURLSessionDataTask* (*OrigDTU)(id, SEL, NSURL*, id);
-        OrigDTU orig_dtu = (OrigDTU)method_getImplementation(dtUrlM);
-        method_setImplementation(dtUrlM, imp_implementationWithBlock(
-            ^NSURLSessionDataTask*(id self, NSURL *url, id completion) {
-                NSString *urlStr = url.absoluteString;
-                if (![urlStr containsString:@"facebook.com"] &&
-                    ![urlStr containsString:@"apple.com"]) {
-                    g_network_called = YES;
-                    NSLog(@"[WizKey] *** NETWORK: %@ ***", urlStr);
-                }
-                return orig_dtu(self, dtUrlSel, url, completion);
-            }
-        ));
-    }
-
-    // Hook NSURLConnection sendSynchronousRequest (legacy)
-    Class connClass = objc_getClass("NSURLConnection");
-    if (connClass) {
-        SEL syncSel = sel_registerName("sendSynchronousRequest:returningResponse:error:");
-        Method syncM = class_getClassMethod(connClass, syncSel);
-        if (syncM) {
-            typedef NSData* (*OrigSync)(id, SEL, id, id, id);
-            OrigSync orig_sync = (OrigSync)method_getImplementation(syncM);
-            method_setImplementation(syncM, imp_implementationWithBlock(
-                ^NSData*(id self, NSURLRequest *req, id resp, id err) {
-                    g_network_called = YES;
-                    NSLog(@"[WizKey] *** NETWORK SYNC: %@ ***", req.URL);
-                    return orig_sync(self, syncSel, req, resp, err);
-                }
-            ));
-        }
-    }
-    NSLog(@"[WizKey] Network hooks installed");
-
-    // Hook IKAFHFDSAJ
+    // Hook IKAFHFDSAJ (success detector)
     Class abvClass = objc_getClass("ABVJSMGADJS");
     if (abvClass) {
         Method m = class_getInstanceMethod(abvClass, sel_registerName("IKAFHFDSAJ"));
         if (m) {
             void (*orig_ik)(id, SEL) = (void (*)(id, SEL))method_getImplementation(m);
             method_setImplementation(m, imp_implementationWithBlock(^(id self) {
-                NSLog(@"[WizKey] *** IKAFHFDSAJ CALLED! ***");
-                g_ikafhfdsaj_called = YES;
+                NSLog(@"[WizKey] *** IKAFHFDSAJ CALLED! VALID KEY! ***");
+                log_stack_trace();
                 orig_ik(self, sel_registerName("IKAFHFDSAJ"));
             }));
         }
     }
 
-    // Hook SCLAlertView
     Class sclAlert = objc_getClass("SCLAlertView");
     if (sclAlert) {
-        SEL addBtnActSel = sel_registerName("addButton:actionBlock:");
-        Method m2 = class_getInstanceMethod(sclAlert, addBtnActSel);
+        // Hook addButton:actionBlock: — when "Exit" is added DURING button tap,
+        // capture stack trace to find the decision function
+        SEL addBtnSel = sel_registerName("addButton:actionBlock:");
+        Method m2 = class_getInstanceMethod(sclAlert, addBtnSel);
         if (m2) {
             void (*orig)(id, SEL, id, id) = (void (*)(id, SEL, id, id))method_getImplementation(m2);
             method_setImplementation(m2, imp_implementationWithBlock(
                 ^(id self, id title, id actBlock) {
-                    NSLog(@"[WizKey] addButton: '%@'", title);
-                    if ([title isEqualToString:@"OK"] || [title isEqualToString:@"Submit"]) {
-                        g_ok_action_block = [actBlock copy];
-                        // Find text field
-                        @try {
-                            id view = ((id(*)(id,SEL))objc_msgSend)(self, sel_registerName("view"));
-                            if (view) {
-                                NSArray *subs = ((id(*)(id,SEL))objc_msgSend)(view, sel_registerName("subviews"));
-                                for (id sv in subs) {
-                                    NSArray *inner = ((id(*)(id,SEL))objc_msgSend)(sv, sel_registerName("subviews"));
-                                    for (id isv in inner) {
-                                        if ([isv isKindOfClass:[UITextField class]]) {
-                                            g_captured_textfield = isv;
-                                            NSLog(@"[WizKey] Text field captured");
-                                        }
-                                    }
-                                }
-                            }
-                        } @catch (NSException *e) {}
+                    NSLog(@"[WizKey] addButton: '%@' (during_tap: %@)", title, g_in_button_tap ? @"YES" : @"NO");
+
+                    // If "Exit" button created DURING our button tap → this is the error popup!
+                    if (g_in_button_tap && [title isEqualToString:@"Exit"]) {
+                        NSLog(@"[WizKey] *** ERROR POPUP CREATED — CAPTURING DECISION POINT ***");
+                        log_stack_trace();
                     }
-                    orig(self, addBtnActSel, title, actBlock);
+
+                    orig(self, addBtnSel, title, actBlock);
                 }
             ));
+            NSLog(@"[WizKey] addButton:actionBlock: HOOKED");
         }
 
-        // Hook buttonTapped:
+        // Hook buttonTapped: with tap tracking
         Method m3 = class_getInstanceMethod(sclAlert, sel_registerName("buttonTapped:"));
         if (m3) {
             void (*orig_tap)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(m3);
             method_setImplementation(m3, imp_implementationWithBlock(^(id self, id button) {
-                g_network_called = NO;
-                g_ikafhfdsaj_called = NO;
-
-                NSString *text = nil;
-                if (g_captured_textfield) {
-                    text = ((id(*)(id,SEL))objc_msgSend)(g_captured_textfield, sel_registerName("text"));
-                    NSLog(@"[WizKey] buttonTapped key: '%@' (len=%lu)", text, (unsigned long)text.length);
-                }
-
+                NSLog(@"[WizKey] buttonTapped: START");
+                g_in_button_tap = YES;
                 orig_tap(self, sel_registerName("buttonTapped:"), button);
-
-                // Check results after 2 seconds (for async network)
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
-                    dispatch_get_main_queue(), ^{
-                    NSLog(@"[WizKey] === POST-TAP RESULTS ===");
-                    NSLog(@"[WizKey]   Network called: %@", g_network_called ? @"YES ← SERVER VALIDATION!" : @"NO (local)");
-                    NSLog(@"[WizKey]   IKAFHFDSAJ called: %@", g_ikafhfdsaj_called ? @"YES ← VALID KEY!" : @"NO");
-                });
+                g_in_button_tap = NO;
+                NSLog(@"[WizKey] buttonTapped: END");
             }));
+            NSLog(@"[WizKey] buttonTapped: hooked");
         }
     }
 
@@ -241,6 +172,6 @@ static void wizard_bypass_init(void) {
             while (1) { usleep(50000); if (*auth != 1) *auth = 1; }
         });
 
-        NSLog(@"[WizKey] === READY — Type the key, tap OK, check POST-TAP RESULTS ===");
+        NSLog(@"[WizKey] === READY — Type key, tap OK, watch for DECISION POINT ===");
     });
 }
